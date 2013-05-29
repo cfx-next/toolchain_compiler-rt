@@ -119,6 +119,7 @@ DEFINE_COMPILERRT_FUNCTION(__gtsf2)
     bx      lr
     
 .align 2
+DEFINE_AEABI_FUNCTION_ALIAS(__aeabi_fcmpun, __unordsf2)
 DEFINE_COMPILERRT_FUNCTION(__unordsf2)
     // Return 1 for NaN values, 0 otherwise.
     mov     r2,         r0, lsl #1
