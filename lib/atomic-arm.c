@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#ifdef __arm__
+
 #include <stdint.h>
 #include <stdio.h>
 
@@ -374,3 +376,4 @@ int32_t __sync_fetch_and_nand_4(volatile int32_t *ptr, int32_t val)
     return android_atomic_fetch_and_nand(ptr, val);
 }
 
+#endif // __arm__
