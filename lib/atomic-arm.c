@@ -18,6 +18,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #define ANDROID_ATOMIC_INLINE inline __attribute__((always_inline))
 
@@ -375,5 +376,62 @@ int32_t __sync_fetch_and_nand_4(volatile int32_t *ptr, int32_t val)
 {
     return android_atomic_fetch_and_nand(ptr, val);
 }
+
+
+// libgcc has these function, we should provided them too.
+#define DEFINE_UNSUPPORT_SYNC_FUNC(FUNCNAME, TYPE, WIDTH)   \
+  TYPE __sync_##FUNCNAME##_##WIDTH(volatile TYPE *ptr, TYPE val)   \
+  {                                                                \
+    fprintf(stderr, "We don't support %s yet!\n", __func__);       \
+    abort();                                                       \
+  }
+
+DEFINE_UNSUPPORT_SYNC_FUNC(fetch_and_add, int8_t, 1)
+DEFINE_UNSUPPORT_SYNC_FUNC(fetch_and_add, int16_t, 2)
+DEFINE_UNSUPPORT_SYNC_FUNC(fetch_and_add, int64_t, 8)
+
+DEFINE_UNSUPPORT_SYNC_FUNC(fetch_and_sub, int8_t, 1)
+DEFINE_UNSUPPORT_SYNC_FUNC(fetch_and_sub, int16_t, 2)
+DEFINE_UNSUPPORT_SYNC_FUNC(fetch_and_sub, int64_t, 8)
+
+DEFINE_UNSUPPORT_SYNC_FUNC(fetch_and_and, int8_t, 1)
+DEFINE_UNSUPPORT_SYNC_FUNC(fetch_and_and, int16_t, 2)
+DEFINE_UNSUPPORT_SYNC_FUNC(fetch_and_and, int64_t, 8)
+
+DEFINE_UNSUPPORT_SYNC_FUNC(fetch_and_or, int8_t, 1)
+DEFINE_UNSUPPORT_SYNC_FUNC(fetch_and_or, int16_t, 2)
+DEFINE_UNSUPPORT_SYNC_FUNC(fetch_and_or, int64_t, 8)
+
+DEFINE_UNSUPPORT_SYNC_FUNC(fetch_and_xor, int8_t, 1)
+DEFINE_UNSUPPORT_SYNC_FUNC(fetch_and_xor, int16_t, 2)
+DEFINE_UNSUPPORT_SYNC_FUNC(fetch_and_xor, int64_t, 8)
+
+DEFINE_UNSUPPORT_SYNC_FUNC(add_and_fetch, int8_t, 1)
+DEFINE_UNSUPPORT_SYNC_FUNC(add_and_fetch, int16_t, 2)
+DEFINE_UNSUPPORT_SYNC_FUNC(add_and_fetch, int64_t, 8)
+
+DEFINE_UNSUPPORT_SYNC_FUNC(sub_and_fetch, int8_t, 1)
+DEFINE_UNSUPPORT_SYNC_FUNC(sub_and_fetch, int16_t, 2)
+DEFINE_UNSUPPORT_SYNC_FUNC(sub_and_fetch, int64_t, 8)
+
+DEFINE_UNSUPPORT_SYNC_FUNC(and_and_fetch, int8_t, 1)
+DEFINE_UNSUPPORT_SYNC_FUNC(and_and_fetch, int16_t, 2)
+DEFINE_UNSUPPORT_SYNC_FUNC(and_and_fetch, int64_t, 8)
+
+DEFINE_UNSUPPORT_SYNC_FUNC(or_and_fetch, int8_t, 1)
+DEFINE_UNSUPPORT_SYNC_FUNC(or_and_fetch, int16_t, 2)
+DEFINE_UNSUPPORT_SYNC_FUNC(or_and_fetch, int64_t, 8)
+
+DEFINE_UNSUPPORT_SYNC_FUNC(xor_and_fetch, int8_t, 1)
+DEFINE_UNSUPPORT_SYNC_FUNC(xor_and_fetch, int16_t, 2)
+DEFINE_UNSUPPORT_SYNC_FUNC(xor_and_fetch, int64_t, 8)
+
+DEFINE_UNSUPPORT_SYNC_FUNC(bool_compare_and_swap, int8_t, 1)
+DEFINE_UNSUPPORT_SYNC_FUNC(bool_compare_and_swap, int16_t, 2)
+DEFINE_UNSUPPORT_SYNC_FUNC(bool_compare_and_swap, int64_t, 8)
+
+DEFINE_UNSUPPORT_SYNC_FUNC(val_compare_and_swap, int8_t, 1)
+DEFINE_UNSUPPORT_SYNC_FUNC(val_compare_and_swap, int32_t, 2)
+DEFINE_UNSUPPORT_SYNC_FUNC(val_compare_and_swap, int64_t, 8)
 
 #endif // __arm__
