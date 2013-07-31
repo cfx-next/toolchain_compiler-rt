@@ -311,6 +311,18 @@ uint32_t __sync_val_compare_and_swap_4 (volatile int32_t *ptr, int32_t oldval, i
     return android_atomic_cas_val(oldval, newval, ptr);
 }
 
+uint32_t __sync_lock_test_and_set_4 (volatile uint32_t *ptr, uint32_t val)
+{
+   uint32_t status, prev;
+   android_memory_barrier();
+    do {
+      prev = *ptr;
+      status = android_atomic_cas_bool(prev, val, ptr);
+    } while (__builtin_expect(status != 0, 0));
+
+    return prev;
+}
+
 /* __sync_op_and_fetch functions */
 
 int32_t __sync_add_and_fetch_4(volatile int32_t *ptr, int32_t val)
