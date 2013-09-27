@@ -58,7 +58,13 @@
 
 #define crt_logb(x) __builtin_logb((x))
 #define crt_logbf(x) __builtin_logbf((x))
+#if defined(__ANDROID__)
+// In Android "long double" carries distinct signature but is treated the
+// same as double, and logbl doesn't exist until API 18
+#define crt_logbl(x) __builtin_logb((double)(x))
+#else
 #define crt_logbl(x) __builtin_logbl((x))
+#endif
 
 #define crt_scalbn(x, y) __builtin_scalbn((x), (y))
 #define crt_scalbnf(x, y) __builtin_scalbnf((x), (y))

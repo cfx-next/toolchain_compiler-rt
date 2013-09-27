@@ -25,6 +25,8 @@
  *===----------------------------------------------------------------------===
  */
 
+#if defined(__clang__)
+
 #include <stdint.h>
 #include <string.h>
 
@@ -335,3 +337,5 @@ OPTIMISED_CASES
 #define OPTIMISED_CASE(n, lockfree, type) ATOMIC_RMW(n, lockfree, type, xor, ^)
 OPTIMISED_CASES
 #undef OPTIMISED_CASE
+
+#endif // __clang__

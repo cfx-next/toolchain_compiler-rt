@@ -289,6 +289,7 @@ int32_t android_atomic_nand_and_fetch (volatile int32_t *ptr, int32_t val)
 }
 #endif
 
+#if !defined(__clang__)
 
 // gcc compatible interface
 // http://gcc.gnu.org/onlinedocs/gcc-4.8.0/gcc/_005f_005fsync-Builtins.html
@@ -445,5 +446,7 @@ DEFINE_UNSUPPORT_SYNC_FUNC(bool_compare_and_swap, int64_t, 8)
 DEFINE_UNSUPPORT_SYNC_FUNC(val_compare_and_swap, int8_t, 1)
 DEFINE_UNSUPPORT_SYNC_FUNC(val_compare_and_swap, int32_t, 2)
 DEFINE_UNSUPPORT_SYNC_FUNC(val_compare_and_swap, int64_t, 8)
+
+#endif // __clang__
 
 #endif // __arm__
