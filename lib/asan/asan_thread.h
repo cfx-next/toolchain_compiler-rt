@@ -19,6 +19,7 @@
 #include "asan_fake_stack.h"
 #include "asan_stack.h"
 #include "asan_stats.h"
+#include "sanitizer_common/sanitizer_common.h"
 #include "sanitizer_common/sanitizer_libc.h"
 #include "sanitizer_common/sanitizer_thread_registry.h"
 
@@ -36,11 +37,13 @@ class AsanThreadContext : public ThreadContextBase {
   explicit AsanThreadContext(int tid)
       : ThreadContextBase(tid),
         announced(false),
+        destructor_iterations(kPthreadDestructorIterations),
+        stack_id(0),
         thread(0) {
-    internal_memset(&stack, 0, sizeof(stack));
   }
   bool announced;
-  StackTrace stack;
+  u8 destructor_iterations;
+  u32 stack_id;
   AsanThread *thread;
 
   void OnCreated(void *arg);
@@ -48,7 +51,7 @@ class AsanThreadContext : public ThreadContextBase {
 };
 
 // AsanThreadContext objects are never freed, so we need many of them.
-COMPILER_CHECK(sizeof(AsanThreadContext) <= 4096);
+COMPILER_CHECK(sizeof(AsanThreadContext) <= 256);
 
 // AsanThread are stored in TSD and destroyed when the thread dies.
 class AsanThread {

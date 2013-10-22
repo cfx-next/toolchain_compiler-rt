@@ -36,7 +36,6 @@ const uptr kCacheLineSize = 64;
 const uptr kMaxPathLength = 512;
 
 extern const char *SanitizerToolName;  // Can be changed by the tool.
-extern uptr SanitizerVerbosity;
 
 uptr GetPageSize();
 uptr GetPageSizeCached();
@@ -440,6 +439,15 @@ typedef bool (*string_predicate_t)(const char *);
 uptr GetListOfModules(LoadedModule *modules, uptr max_modules,
                       string_predicate_t filter);
 
+#if SANITIZER_POSIX
+const uptr kPthreadDestructorIterations = 4;
+#else
+// Unused on Windows.
+const uptr kPthreadDestructorIterations = 0;
+#endif
+
+// Callback type for iterating over a set of memory ranges.
+typedef void (*RangeIteratorCallback)(uptr begin, uptr end, void *arg);
 }  // namespace __sanitizer
 
 #endif  // SANITIZER_COMMON_H

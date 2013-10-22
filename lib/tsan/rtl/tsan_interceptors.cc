@@ -136,7 +136,7 @@ static LibIgnore *libignore() {
 
 void InitializeLibIgnore() {
   libignore()->Init(*GetSuppressionContext());
-  libignore()->OnLibraryLoaded();
+  libignore()->OnLibraryLoaded(0);
 }
 
 }  // namespace __tsan
@@ -263,7 +263,7 @@ TSAN_INTERCEPTOR(void*, dlopen, const char *filename, int flag) {
   thr->in_rtl = 0;
   void *res = REAL(dlopen)(filename, flag);
   thr->in_rtl = 1;
-  libignore()->OnLibraryLoaded();
+  libignore()->OnLibraryLoaded(filename);
   return res;
 }
 
@@ -853,7 +853,8 @@ extern "C" void *__tsan_thread_start_func(void *arg) {
   {
     ThreadState *thr = cur_thread();
     ScopedInRtl in_rtl;
-    if (pthread_setspecific(g_thread_finalize_key, (void*)4)) {
+    if (pthread_setspecific(g_thread_finalize_key,
+                            (void *)kPthreadDestructorIterations)) {
       Printf("ThreadSanitizer: failed to set thread key\n");
       Die();
     }
@@ -881,13 +882,7 @@ TSAN_INTERCEPTOR(int, pthread_create,
   }
   int detached = 0;
   pthread_attr_getdetachstate(attr, &detached);
-
-#if defined(TSAN_DEBUG_OUTPUT)
-  int verbosity = (TSAN_DEBUG_OUTPUT);
-#else
-  int verbosity = 0;
-#endif
-  AdjustStackSizeLinux(attr, verbosity);
+  AdjustStackSizeLinux(attr);
 
   ThreadParam p;
   p.callback = callback;
@@ -951,15 +946,6 @@ TSAN_INTERCEPTOR(int, pthread_mutex_destroy, void *m) {
   return res;
 }
 
-TSAN_INTERCEPTOR(int, pthread_mutex_lock, void *m) {
-  SCOPED_TSAN_INTERCEPTOR(pthread_mutex_lock, m);
-  int res = REAL(pthread_mutex_lock)(m);
-  if (res == 0) {
-    MutexLock(thr, pc, (uptr)m);
-  }
-  return res;
-}
-
 TSAN_INTERCEPTOR(int, pthread_mutex_trylock, void *m) {
   SCOPED_TSAN_INTERCEPTOR(pthread_mutex_trylock, m);
   int res = REAL(pthread_mutex_trylock)(m);
@@ -975,13 +961,6 @@ TSAN_INTERCEPTOR(int, pthread_mutex_timedlock, void *m, void *abstime) {
   if (res == 0) {
     MutexLock(thr, pc, (uptr)m);
   }
-  return res;
-}
-
-TSAN_INTERCEPTOR(int, pthread_mutex_unlock, void *m) {
-  SCOPED_TSAN_INTERCEPTOR(pthread_mutex_unlock, m);
-  MutexUnlock(thr, pc, (uptr)m);
-  int res = REAL(pthread_mutex_unlock)(m);
   return res;
 }
 
@@ -1107,40 +1086,10 @@ TSAN_INTERCEPTOR(int, pthread_rwlock_unlock, void *m) {
   return res;
 }
 
-TSAN_INTERCEPTOR(int, pthread_cond_init, void *c, void *a) {
-  SCOPED_TSAN_INTERCEPTOR(pthread_cond_init, c, a);
-  MemoryWrite(thr, pc, (uptr)c, kSizeLog1);
-  int res = REAL(pthread_cond_init)(c, a);
-  return res;
-}
-
 TSAN_INTERCEPTOR(int, pthread_cond_destroy, void *c) {
   SCOPED_TSAN_INTERCEPTOR(pthread_cond_destroy, c);
   MemoryWrite(thr, pc, (uptr)c, kSizeLog1);
   int res = REAL(pthread_cond_destroy)(c);
-  return res;
-}
-
-TSAN_INTERCEPTOR(int, pthread_cond_signal, void *c) {
-  SCOPED_TSAN_INTERCEPTOR(pthread_cond_signal, c);
-  MemoryRead(thr, pc, (uptr)c, kSizeLog1);
-  int res = REAL(pthread_cond_signal)(c);
-  return res;
-}
-
-TSAN_INTERCEPTOR(int, pthread_cond_broadcast, void *c) {
-  SCOPED_TSAN_INTERCEPTOR(pthread_cond_broadcast, c);
-  MemoryRead(thr, pc, (uptr)c, kSizeLog1);
-  int res = REAL(pthread_cond_broadcast)(c);
-  return res;
-}
-
-TSAN_INTERCEPTOR(int, pthread_cond_wait, void *c, void *m) {
-  SCOPED_TSAN_INTERCEPTOR(pthread_cond_wait, c, m);
-  MutexUnlock(thr, pc, (uptr)m);
-  MemoryRead(thr, pc, (uptr)c, kSizeLog1);
-  int res = REAL(pthread_cond_wait)(c, m);
-  MutexLock(thr, pc, (uptr)m);
   return res;
 }
 
@@ -1523,22 +1472,28 @@ TSAN_INTERCEPTOR(int, pipe2, int *pipefd, int flags) {
 
 TSAN_INTERCEPTOR(long_t, send, int fd, void *buf, long_t len, int flags) {
   SCOPED_TSAN_INTERCEPTOR(send, fd, buf, len, flags);
-  if (fd >= 0)
+  if (fd >= 0) {
+    FdAccess(thr, pc, fd);
     FdRelease(thr, pc, fd);
+  }
   int res = REAL(send)(fd, buf, len, flags);
   return res;
 }
 
 TSAN_INTERCEPTOR(long_t, sendmsg, int fd, void *msg, int flags) {
   SCOPED_TSAN_INTERCEPTOR(sendmsg, fd, msg, flags);
-  if (fd >= 0)
+  if (fd >= 0) {
+    FdAccess(thr, pc, fd);
     FdRelease(thr, pc, fd);
+  }
   int res = REAL(sendmsg)(fd, msg, flags);
   return res;
 }
 
 TSAN_INTERCEPTOR(long_t, recv, int fd, void *buf, long_t len, int flags) {
   SCOPED_TSAN_INTERCEPTOR(recv, fd, buf, len, flags);
+  if (fd >= 0)
+    FdAccess(thr, pc, fd);
   int res = REAL(recv)(fd, buf, len, flags);
   if (res >= 0 && fd >= 0) {
     FdAcquire(thr, pc, fd);
@@ -1644,21 +1599,23 @@ TSAN_INTERCEPTOR(void*, opendir, char *path) {
 
 TSAN_INTERCEPTOR(int, epoll_ctl, int epfd, int op, int fd, void *ev) {
   SCOPED_TSAN_INTERCEPTOR(epoll_ctl, epfd, op, fd, ev);
-  if (op == EPOLL_CTL_ADD && epfd >= 0) {
-    FdRelease(thr, pc, epfd);
-  }
-  int res = REAL(epoll_ctl)(epfd, op, fd, ev);
-  if (fd >= 0)
+  if (epfd >= 0)
+    FdAccess(thr, pc, epfd);
+  if (epfd >= 0 && fd >= 0)
     FdAccess(thr, pc, fd);
+  if (op == EPOLL_CTL_ADD && epfd >= 0)
+    FdRelease(thr, pc, epfd);
+  int res = REAL(epoll_ctl)(epfd, op, fd, ev);
   return res;
 }
 
 TSAN_INTERCEPTOR(int, epoll_wait, int epfd, void *ev, int cnt, int timeout) {
   SCOPED_TSAN_INTERCEPTOR(epoll_wait, epfd, ev, cnt, timeout);
+  if (epfd >= 0)
+    FdAccess(thr, pc, epfd);
   int res = BLOCK_REAL(epoll_wait)(epfd, ev, cnt, timeout);
-  if (res > 0 && epfd >= 0) {
+  if (res > 0 && epfd >= 0)
     FdAcquire(thr, pc, epfd);
-  }
   return res;
 }
 
@@ -1898,6 +1855,8 @@ struct TsanInterceptorContext {
   FdAcquire(((TsanInterceptorContext *) ctx)->thr, pc, fd)
 #define COMMON_INTERCEPTOR_FD_RELEASE(ctx, fd) \
   FdRelease(((TsanInterceptorContext *) ctx)->thr, pc, fd)
+#define COMMON_INTERCEPTOR_FD_ACCESS(ctx, fd) \
+  FdAccess(((TsanInterceptorContext *) ctx)->thr, pc, fd)
 #define COMMON_INTERCEPTOR_FD_SOCKET_ACCEPT(ctx, fd, newfd) \
   FdSocketAccept(((TsanInterceptorContext *) ctx)->thr, pc, fd, newfd)
 #define COMMON_INTERCEPTOR_SET_THREAD_NAME(ctx, name) \
@@ -1905,6 +1864,12 @@ struct TsanInterceptorContext {
 #define COMMON_INTERCEPTOR_BLOCK_REAL(name) BLOCK_REAL(name)
 #define COMMON_INTERCEPTOR_ON_EXIT(ctx) \
   OnExit(((TsanInterceptorContext *) ctx)->thr)
+#define COMMON_INTERCEPTOR_MUTEX_LOCK(ctx, m) \
+  MutexLock(((TsanInterceptorContext *)ctx)->thr, \
+            ((TsanInterceptorContext *)ctx)->pc, (uptr)m)
+#define COMMON_INTERCEPTOR_MUTEX_UNLOCK(ctx, m) \
+  MutexUnlock(((TsanInterceptorContext *)ctx)->thr, \
+            ((TsanInterceptorContext *)ctx)->pc, (uptr)m)
 #include "sanitizer_common/sanitizer_common_interceptors.inc"
 
 #define TSAN_SYSCALL() \
@@ -2092,10 +2057,8 @@ void InitializeInterceptors() {
 
   TSAN_INTERCEPT(pthread_mutex_init);
   TSAN_INTERCEPT(pthread_mutex_destroy);
-  TSAN_INTERCEPT(pthread_mutex_lock);
   TSAN_INTERCEPT(pthread_mutex_trylock);
   TSAN_INTERCEPT(pthread_mutex_timedlock);
-  TSAN_INTERCEPT(pthread_mutex_unlock);
 
   TSAN_INTERCEPT(pthread_spin_init);
   TSAN_INTERCEPT(pthread_spin_destroy);
@@ -2113,11 +2076,7 @@ void InitializeInterceptors() {
   TSAN_INTERCEPT(pthread_rwlock_timedwrlock);
   TSAN_INTERCEPT(pthread_rwlock_unlock);
 
-  INTERCEPT_FUNCTION_VER(pthread_cond_init, GLIBC_2.3.2);
   INTERCEPT_FUNCTION_VER(pthread_cond_destroy, GLIBC_2.3.2);
-  INTERCEPT_FUNCTION_VER(pthread_cond_signal, GLIBC_2.3.2);
-  INTERCEPT_FUNCTION_VER(pthread_cond_broadcast, GLIBC_2.3.2);
-  INTERCEPT_FUNCTION_VER(pthread_cond_wait, GLIBC_2.3.2);
   INTERCEPT_FUNCTION_VER(pthread_cond_timedwait, GLIBC_2.3.2);
 
   TSAN_INTERCEPT(pthread_barrier_init);

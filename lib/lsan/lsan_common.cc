@@ -93,8 +93,12 @@ void InitializeSuppressions() {
 
 void InitCommonLsan() {
   InitializeFlags();
-  InitializeSuppressions();
-  InitializePlatformSpecificModules();
+  if (common_flags()->detect_leaks) {
+    // Initialization which can fail or print warnings should only be done if
+    // LSan is actually enabled.
+    InitializeSuppressions();
+    InitializePlatformSpecificModules();
+  }
 }
 
 class Decorator: private __sanitizer::AnsiColorDecorator {
@@ -138,6 +142,8 @@ void ScanRangeForPointers(uptr begin, uptr end,
     if (!CanBeAHeapPointer(reinterpret_cast<uptr>(p))) continue;
     uptr chunk = PointsIntoChunk(p);
     if (!chunk) continue;
+    // Pointers to self don't count. This matters when tag == kIndirectlyLeaked.
+    if (chunk == begin) continue;
     LsanMetadata m(chunk);
     // Reachable beats ignored beats leaked.
     if (m.tag() == kReachable) continue;
@@ -149,6 +155,11 @@ void ScanRangeForPointers(uptr begin, uptr end,
     if (frontier)
       frontier->push_back(chunk);
   }
+}
+
+void ForEachExtraStackRangeCb(uptr begin, uptr end, void* arg) {
+  Frontier *frontier = reinterpret_cast<Frontier *>(arg);
+  ScanRangeForPointers(begin, end, frontier, "FAKE STACK", kReachable);
 }
 
 // Scans thread data (stacks and TLS) for heap pointers.
@@ -199,6 +210,7 @@ static void ProcessThreads(SuspendedThreadsList const &suspended_threads,
       }
       ScanRangeForPointers(stack_begin, stack_end, frontier, "STACK",
                            kReachable);
+      ForEachExtraStackRange(os_id, ForEachExtraStackRangeCb, frontier);
     }
 
     if (flags()->use_tls) {
@@ -529,6 +541,8 @@ extern "C" {
 SANITIZER_INTERFACE_ATTRIBUTE
 void __lsan_ignore_object(const void *p) {
 #if CAN_SANITIZE_LEAKS
+  if (!common_flags()->detect_leaks)
+    return;
   // Cannot use PointsIntoChunk or LsanMetadata here, since the allocator is not
   // locked.
   BlockingMutexLock l(&global_mutex);
@@ -553,7 +567,7 @@ void __lsan_disable() {
 SANITIZER_INTERFACE_ATTRIBUTE
 void __lsan_enable() {
 #if CAN_SANITIZE_LEAKS
-  if (!__lsan::disable_counter) {
+  if (!__lsan::disable_counter && common_flags()->detect_leaks) {
     Report("Unmatched call to __lsan_enable().\n");
     Die();
   }

@@ -20,6 +20,7 @@
 #include "sanitizer_common/sanitizer_common.h"
 #include "sanitizer_common/sanitizer_flags.h"
 #include "sanitizer_common/sanitizer_report_decorator.h"
+#include "sanitizer_common/sanitizer_stackdepot.h"
 #include "sanitizer_common/sanitizer_symbolizer.h"
 
 namespace __asan {
@@ -414,7 +415,11 @@ static void DescribeAccessToHeapChunk(AsanChunkView chunk, uptr addr,
 
 void DescribeHeapAddress(uptr addr, uptr access_size) {
   AsanChunkView chunk = FindHeapChunkByAddress(addr);
-  if (!chunk.IsValid()) return;
+  if (!chunk.IsValid()) {
+    Printf("AddressSanitizer can not describe address in more detail "
+           "(wild memory access suspected).\n");
+    return;
+  }
   DescribeAccessToHeapChunk(chunk, addr, access_size);
   CHECK(chunk.AllocTid() != kInvalidTid);
   asanThreadRegistry().CheckLocked();
@@ -481,7 +486,9 @@ void DescribeThread(AsanThreadContext *context) {
          context->parent_tid,
          ThreadNameWithParenthesis(context->parent_tid,
                                    tname, sizeof(tname)));
-  PrintStack(&context->stack);
+  uptr stack_size;
+  const uptr *stack_trace = StackDepotGet(context->stack_id, &stack_size);
+  PrintStack(stack_trace, stack_size);
   // Recursively described parent thread if needed.
   if (flags()->print_full_thread_history) {
     AsanThreadContext *parent_context =
@@ -564,9 +571,9 @@ void ReportSIGSEGV(uptr pc, uptr sp, uptr bp, uptr addr) {
              (void*)addr, (void*)pc, (void*)sp, (void*)bp,
              GetCurrentTidOrInvalid());
   Printf("%s", d.EndWarning());
-  Printf("AddressSanitizer can not provide additional info.\n");
   GET_STACK_TRACE_FATAL(pc, bp);
   PrintStack(&stack);
+  Printf("AddressSanitizer can not provide additional info.\n");
   ReportSummary("SEGV", &stack);
 }
 

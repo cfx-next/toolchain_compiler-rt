@@ -412,17 +412,14 @@ struct ThreadState {
   // We do not distinguish beteween ignoring reads and writes
   // for better performance.
   int ignore_reads_and_writes;
+  int ignore_sync;
+  // C/C++ uses fixed size shadow stack embed into Trace.
+  // Go uses malloc-allocated shadow stack with dynamic size.
+  uptr *shadow_stack;
+  uptr *shadow_stack_end;
   uptr *shadow_stack_pos;
   u64 *racy_shadow_addr;
   u64 racy_state[2];
-#ifndef TSAN_GO
-  // C/C++ uses embed shadow stack of fixed size.
-  uptr shadow_stack[kShadowStackSize];
-#else
-  // Go uses satellite shadow stack with dynamic size.
-  uptr *shadow_stack;
-  uptr *shadow_stack_end;
-#endif
   MutexSet mset;
   ThreadClock clock;
 #ifndef TSAN_GO
@@ -680,8 +677,11 @@ void ALWAYS_INLINE MemoryWriteAtomic(ThreadState *thr, uptr pc,
 void MemoryResetRange(ThreadState *thr, uptr pc, uptr addr, uptr size);
 void MemoryRangeFreed(ThreadState *thr, uptr pc, uptr addr, uptr size);
 void MemoryRangeImitateWrite(ThreadState *thr, uptr pc, uptr addr, uptr size);
+
 void ThreadIgnoreBegin(ThreadState *thr);
 void ThreadIgnoreEnd(ThreadState *thr);
+void ThreadIgnoreSyncBegin(ThreadState *thr);
+void ThreadIgnoreSyncEnd(ThreadState *thr);
 
 void FuncEntry(ThreadState *thr, uptr pc);
 void FuncExit(ThreadState *thr);
@@ -711,6 +711,10 @@ void AcquireGlobal(ThreadState *thr, uptr pc);
 void Release(ThreadState *thr, uptr pc, uptr addr);
 void ReleaseStore(ThreadState *thr, uptr pc, uptr addr);
 void AfterSleep(ThreadState *thr, uptr pc);
+void AcquireImpl(ThreadState *thr, uptr pc, SyncClock *c);
+void ReleaseImpl(ThreadState *thr, uptr pc, SyncClock *c);
+void ReleaseStoreImpl(ThreadState *thr, uptr pc, SyncClock *c);
+void AcquireReleaseImpl(ThreadState *thr, uptr pc, SyncClock *c);
 
 // The hacky call uses custom calling convention and an assembly thunk.
 // It is considerably faster that a normal call for the caller
