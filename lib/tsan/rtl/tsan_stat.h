@@ -379,6 +379,15 @@ enum StatType {
   StatInt_statvfs64,
   StatInt_fstatvfs,
   StatInt_fstatvfs64,
+  StatInt_initgroups,
+  StatInt_ether_ntoa,
+  StatInt_ether_aton,
+  StatInt_ether_ntoa_r,
+  StatInt_ether_aton_r,
+  StatInt_ether_ntohost,
+  StatInt_ether_hostton,
+  StatInt_ether_line,
+  StatInt_shmctl,
 
   // Dynamic annotations.
   StatAnnotation,
