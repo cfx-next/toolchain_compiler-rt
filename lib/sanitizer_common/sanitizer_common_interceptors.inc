@@ -2512,7 +2512,7 @@ INTERCEPTOR(int, shmctl, int shmid, int cmd, void *buf) {
   if (res >= 0) {
     unsigned sz = 0;
     if (cmd == shmctl_ipc_stat || cmd == shmctl_shm_stat)
-      sz = struct_shmid_ds_sz;
+      sz = sizeof(__sanitizer_shmid_ds);
     else if (cmd == shmctl_ipc_info)
       sz = struct_shminfo_sz;
     else if (cmd == shmctl_shm_info)
@@ -2525,6 +2525,136 @@ INTERCEPTOR(int, shmctl, int shmid, int cmd, void *buf) {
 #else
 #define INIT_SHMCTL
 #endif
+
+#if SANITIZER_INTERCEPT_RANDOM_R
+INTERCEPTOR(int, random_r, void *buf, u32 *result) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, random_r, buf, result);
+  int res = REAL(random_r)(buf, result);
+  if (!res && result)
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, result, sizeof(*result));
+  return res;
+}
+#define INIT_RANDOM_R INTERCEPT_FUNCTION(random_r);
+#else
+#define INIT_RANDOM_R
+#endif
+
+#if SANITIZER_INTERCEPT_PTHREAD_ATTR_GET || \
+    SANITIZER_INTERCEPT_PTHREAD_ATTR_GETINHERITSSCHED
+#define INTERCEPTOR_PTHREAD_ATTR_GET(what, sz)                      \
+  INTERCEPTOR(int, pthread_attr_get##what, void *attr, void *r) {   \
+    void *ctx;                                                      \
+    COMMON_INTERCEPTOR_ENTER(ctx, pthread_attr_get##what, attr, r); \
+    int res = REAL(pthread_attr_get##what)(attr, r);                \
+    if (!res && r) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, r, sz);      \
+    return res;                                                     \
+  }
+#endif
+
+#if SANITIZER_INTERCEPT_PTHREAD_ATTR_GET
+INTERCEPTOR_PTHREAD_ATTR_GET(detachstate, sizeof(int))
+INTERCEPTOR_PTHREAD_ATTR_GET(guardsize, sizeof(SIZE_T))
+INTERCEPTOR_PTHREAD_ATTR_GET(schedparam, struct_sched_param_sz)
+INTERCEPTOR_PTHREAD_ATTR_GET(schedpolicy, sizeof(int))
+INTERCEPTOR_PTHREAD_ATTR_GET(scope, sizeof(int))
+INTERCEPTOR_PTHREAD_ATTR_GET(stacksize, sizeof(SIZE_T))
+INTERCEPTOR(int, pthread_attr_getstack, void *attr, void **addr, SIZE_T *size) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, pthread_attr_getstack, attr, addr, size);
+  int res = REAL(pthread_attr_getstack)(attr, addr, size);
+  if (!res) {
+    if (addr) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, addr, sizeof(*addr));
+    if (size) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, size, sizeof(*size));
+  }
+  return res;
+}
+
+#define INIT_PTHREAD_ATTR_GET                       \
+  INTERCEPT_FUNCTION(pthread_attr_getdetachstate);  \
+  INTERCEPT_FUNCTION(pthread_attr_getguardsize);    \
+  INTERCEPT_FUNCTION(pthread_attr_getschedparam);   \
+  INTERCEPT_FUNCTION(pthread_attr_getschedpolicy);  \
+  INTERCEPT_FUNCTION(pthread_attr_getscope);        \
+  INTERCEPT_FUNCTION(pthread_attr_getstacksize);    \
+  INTERCEPT_FUNCTION(pthread_attr_getstack);
+#else
+#define INIT_PTHREAD_ATTR_GET
+#endif
+
+#if SANITIZER_INTERCEPT_PTHREAD_ATTR_GETINHERITSCHED
+INTERCEPTOR_PTHREAD_ATTR_GET(inheritsched, sizeof(int))
+
+#define INIT_PTHREAD_ATTR_GETINHERITSCHED \
+  INTERCEPT_FUNCTION(pthread_attr_getinheritsched);
+#else
+#define INIT_PTHREAD_ATTR_GETINHERITSCHED
+#endif
+
+#if SANITIZER_INTERCEPT_PTHREAD_ATTR_GETAFFINITY_NP
+INTERCEPTOR(int, pthread_attr_getaffinity_np, void *attr, SIZE_T cpusetsize,
+            void *cpuset) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, pthread_attr_getaffinity_np, attr, cpusetsize,
+                           cpuset);
+  int res = REAL(pthread_attr_getaffinity_np)(attr, cpusetsize, cpuset);
+  if (!res && cpusetsize && cpuset)
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, cpuset, cpusetsize);
+  return res;
+}
+
+#define INIT_PTHREAD_ATTR_GETAFFINITY_NP \
+  INTERCEPT_FUNCTION(pthread_attr_getaffinity_np);
+#else
+#define INIT_PTHREAD_ATTR_GETAFFINITY_NP
+#endif
+
+#if SANITIZER_INTERCEPT_TMPNAM
+INTERCEPTOR(char *, tmpnam, char *s) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, tmpnam, s);
+  char *res = REAL(tmpnam)(s);
+  if (res) {
+    if (s)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, s, REAL(strlen)(s) + 1);
+    else
+      COMMON_INTERCEPTOR_INITIALIZE_RANGE(ctx, res, REAL(strlen)(res) + 1);
+  }
+  return res;
+}
+#define INIT_TMPNAM INTERCEPT_FUNCTION(tmpnam);
+#else
+#define INIT_TMPNAM
+#endif
+
+#if SANITIZER_INTERCEPT_TMPNAM_R
+INTERCEPTOR(char *, tmpnam_r, char *s) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, tmpnam_r, s);
+  char *res = REAL(tmpnam_r)(s);
+  if (res && s) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, s, REAL(strlen)(s) + 1);
+  return res;
+}
+#define INIT_TMPNAM_R INTERCEPT_FUNCTION(tmpnam_r);
+#else
+#define INIT_TMPNAM_R
+#endif
+
+#if SANITIZER_INTERCEPT_TEMPNAM
+INTERCEPTOR(char *, tempnam, char *dir, char *pfx) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, tempnam, dir, pfx);
+  if (dir) COMMON_INTERCEPTOR_READ_RANGE(ctx, dir, REAL(strlen)(dir) + 1);
+  if (pfx) COMMON_INTERCEPTOR_READ_RANGE(ctx, pfx, REAL(strlen)(pfx) + 1);
+  char *res = REAL(tempnam)(dir, pfx);
+  if (res) COMMON_INTERCEPTOR_INITIALIZE_RANGE(ctx, res, REAL(strlen)(res) + 1);
+  return res;
+}
+#define INIT_TEMPNAM INTERCEPT_FUNCTION(tempnam);
+#else
+#define INIT_TEMPNAM
+#endif
+
 
 #define SANITIZER_COMMON_INTERCEPTORS_INIT \
   INIT_STRCMP;                             \
@@ -2620,4 +2750,11 @@ INTERCEPTOR(int, shmctl, int shmid, int cmd, void *buf) {
   INIT_ETHER;                              \
   INIT_ETHER_R;                            \
   INIT_SHMCTL;                             \
+  INIT_RANDOM_R;                           \
+  INIT_PTHREAD_ATTR_GET;                   \
+  INIT_PTHREAD_ATTR_GETINHERITSCHED;       \
+  INIT_PTHREAD_ATTR_GETAFFINITY_NP;        \
+  INIT_TMPNAM;                             \
+  INIT_TMPNAM_R;                           \
+  INIT_TEMPNAM;                            \
 /**/

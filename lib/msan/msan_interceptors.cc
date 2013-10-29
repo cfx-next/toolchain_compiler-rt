@@ -1040,8 +1040,6 @@ INTERCEPTOR(int, signal, int signo, uptr cb) {
 
 extern "C" int pthread_attr_init(void *attr);
 extern "C" int pthread_attr_destroy(void *attr);
-extern "C" int pthread_attr_setstacksize(void *attr, uptr stacksize);
-extern "C" int pthread_attr_getstack(void *attr, uptr *stack, uptr *stacksize);
 extern "C" int pthread_setspecific(unsigned key, const void *v);
 extern "C" int pthread_yield();
 
@@ -1158,6 +1156,22 @@ INTERCEPTOR(int, __cxa_atexit, void (*func)(void *), void *arg,
   r->arg = arg;
   return REAL(__cxa_atexit)(MSanAtExitWrapper, r, dso_handle);
 }
+
+DECLARE_REAL(int, shmctl, int shmid, int cmd, void *buf)
+
+INTERCEPTOR(void *, shmat, int shmid, const void *shmaddr, int shmflg) {
+  ENSURE_MSAN_INITED();
+  void *p = REAL(shmat)(shmid, shmaddr, shmflg);
+  if (p != (void *)-1) {
+    __sanitizer_shmid_ds ds;
+    int res = REAL(shmctl)(shmid, shmctl_ipc_stat, &ds);
+    if (!res) {
+      __msan_unpoison(p, ds.shm_segsz);
+    }
+  }
+  return p;
+}
+
 
 struct MSanInterceptorContext {
   bool in_interceptor_scope;
@@ -1461,6 +1475,7 @@ void InitializeInterceptors() {
   INTERCEPT_FUNCTION(pthread_join);
   INTERCEPT_FUNCTION(tzset);
   INTERCEPT_FUNCTION(__cxa_atexit);
+  INTERCEPT_FUNCTION(shmat);
 
   if (REAL(pthread_key_create)(&g_thread_finalize_key, &thread_finalize)) {
     Printf("MemorySanitizer: failed to create thread key\n");

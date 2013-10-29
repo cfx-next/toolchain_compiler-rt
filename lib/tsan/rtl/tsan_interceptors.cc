@@ -43,9 +43,8 @@ struct ucontext_t {
 
 extern "C" int pthread_attr_init(void *attr);
 extern "C" int pthread_attr_destroy(void *attr);
-extern "C" int pthread_attr_getdetachstate(void *attr, int *v);
+DECLARE_REAL(int, pthread_attr_getdetachstate, void *, void *)
 extern "C" int pthread_attr_setstacksize(void *attr, uptr stacksize);
-extern "C" int pthread_attr_getstacksize(void *attr, uptr *stacksize);
 extern "C" int pthread_key_create(unsigned *key, void (*destructor)(void* v));
 extern "C" int pthread_setspecific(unsigned key, const void *v);
 extern "C" int pthread_mutexattr_gettype(void *a, int *type);
@@ -881,7 +880,7 @@ TSAN_INTERCEPTOR(int, pthread_create,
     attr = &myattr;
   }
   int detached = 0;
-  pthread_attr_getdetachstate(attr, &detached);
+  REAL(pthread_attr_getdetachstate)(attr, &detached);
   AdjustStackSizeLinux(attr);
 
   ThreadParam p;
@@ -2192,9 +2191,15 @@ void InitializeInterceptors() {
 }
 
 void internal_start_thread(void(*func)(void *arg), void *arg) {
+  // Start the thread with signals blocked, otherwise it can steal users
+  // signals.
+  __sanitizer_kernel_sigset_t set, old;
+  internal_sigfillset(&set);
+  internal_sigprocmask(SIG_SETMASK, &set, &old);
   void *th;
   REAL(pthread_create)(&th, 0, (void*(*)(void *arg))func, arg);
   REAL(pthread_detach)(th);
+  internal_sigprocmask(SIG_SETMASK, &old, 0);
 }
 
 }  // namespace __tsan
