@@ -11,9 +11,11 @@
 
 //  void __aeabi_memcmp(void *dest, void *src, size_t n) { memcmp(dest, src, n); }
 
+#ifndef __ANDROID__
         .align 2
 DEFINE_COMPILERRT_FUNCTION(__aeabi_memcmp)
         b       memcmp
 
 DEFINE_AEABI_FUNCTION_ALIAS(__aeabi_memcmp4, __aeabi_memcmp)
 DEFINE_AEABI_FUNCTION_ALIAS(__aeabi_memcmp8, __aeabi_memcmp)
+#endif

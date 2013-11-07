@@ -11,9 +11,11 @@
 
 //  void __aeabi_memcpy(void *dest, void *src, size_t n) { memcpy(dest, src, n); }
 
+#ifndef __ANDROID__
         .align 2
 DEFINE_COMPILERRT_FUNCTION(__aeabi_memcpy)
         b       memcpy
 
 DEFINE_AEABI_FUNCTION_ALIAS(__aeabi_memcpy4, __aeabi_memcpy)
 DEFINE_AEABI_FUNCTION_ALIAS(__aeabi_memcpy8, __aeabi_memcpy)
+#endif
