@@ -25,13 +25,7 @@ static bool MaybeCallAsanSymbolize(const void *pc, char *out_buffer,
 }
 
 void PrintStack(const uptr *trace, uptr size) {
-  if (!trace) {
-    Printf("<empty stack>\n\n");
-    return;
-  }
-  StackTrace::PrintStack(trace, size, common_flags()->symbolize,
-                         MaybeCallAsanSymbolize);
-    Printf("\n");
+  StackTrace::PrintStack(trace, size, MaybeCallAsanSymbolize);
 }
 
 void PrintStack(StackTrace *stack) {

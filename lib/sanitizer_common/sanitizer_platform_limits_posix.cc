@@ -122,7 +122,9 @@
 namespace __sanitizer {
   unsigned struct_utsname_sz = sizeof(struct utsname);
   unsigned struct_stat_sz = sizeof(struct stat);
+#if !SANITIZER_IOS
   unsigned struct_stat64_sz = sizeof(struct stat64);
+#endif // !SANITIZER_IOS
   unsigned struct_rusage_sz = sizeof(struct rusage);
   unsigned struct_tm_sz = sizeof(struct tm);
   unsigned struct_passwd_sz = sizeof(struct passwd);
@@ -143,9 +145,12 @@ namespace __sanitizer {
   unsigned struct_sched_param_sz = sizeof(struct sched_param);
   unsigned struct_statfs_sz = sizeof(struct statfs);
 
+#if SANITIZER_MAC && !SANITIZER_IOS
+  unsigned struct_statfs64_sz = sizeof(struct statfs64);
+#endif // SANITIZER_MAC && !SANITIZER_IOS
+
 #if !SANITIZER_ANDROID
   unsigned ucontext_t_sz = sizeof(ucontext_t);
-  unsigned struct_statfs64_sz = sizeof(struct statfs64);
 #endif // !SANITIZER_ANDROID
 
 #if SANITIZER_LINUX
@@ -212,12 +217,15 @@ namespace __sanitizer {
       (defined(__i386) || defined (__x86_64))  // NOLINT
   unsigned struct_user_regs_struct_sz = sizeof(struct user_regs_struct);
   unsigned struct_user_fpregs_struct_sz = sizeof(struct user_fpregs_struct);
-#if __WORDSIZE == 64
+#ifdef __x86_64
   unsigned struct_user_fpxregs_struct_sz = 0;
 #else
   unsigned struct_user_fpxregs_struct_sz = sizeof(struct user_fpxregs_struct);
 #endif
 
+  int ptrace_peektext = PTRACE_PEEKTEXT;
+  int ptrace_peekdata = PTRACE_PEEKDATA;
+  int ptrace_peekuser = PTRACE_PEEKUSER;
   int ptrace_getregs = PTRACE_GETREGS;
   int ptrace_setregs = PTRACE_SETREGS;
   int ptrace_getfpregs = PTRACE_GETFPREGS;
@@ -755,23 +763,6 @@ namespace __sanitizer {
   unsigned IOCTL_TIOCSSERIAL = TIOCSSERIAL;
 #endif
 }  // namespace __sanitizer
-
-#define CHECK_TYPE_SIZE(TYPE) \
-  COMPILER_CHECK(sizeof(__sanitizer_##TYPE) == sizeof(TYPE))
-
-#define CHECK_SIZE_AND_OFFSET(CLASS, MEMBER)                       \
-  COMPILER_CHECK(sizeof(((__sanitizer_##CLASS *) NULL)->MEMBER) == \
-                 sizeof(((CLASS *) NULL)->MEMBER));                \
-  COMPILER_CHECK(offsetof(__sanitizer_##CLASS, MEMBER) ==          \
-                 offsetof(CLASS, MEMBER))
-
-// For sigaction, which is a function and struct at the same time,
-// and thus requires explicit "struct" in sizeof() expression.
-#define CHECK_STRUCT_SIZE_AND_OFFSET(CLASS, MEMBER)                       \
-  COMPILER_CHECK(sizeof(((struct __sanitizer_##CLASS *) NULL)->MEMBER) == \
-                 sizeof(((struct CLASS *) NULL)->MEMBER));                \
-  COMPILER_CHECK(offsetof(struct __sanitizer_##CLASS, MEMBER) ==          \
-                 offsetof(struct CLASS, MEMBER))
 
 COMPILER_CHECK(sizeof(__sanitizer_pthread_attr_t) >= sizeof(pthread_attr_t));
 

@@ -142,6 +142,7 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
 static void InitializeFlags(Flags *f, const char *options) {
   CommonFlags *cf = common_flags();
   cf->external_symbolizer_path = GetEnv("MSAN_SYMBOLIZER_PATH");
+  cf->symbolize = true;
   cf->strip_path_prefix = "";
   cf->fast_unwind_on_fatal = false;
   cf->fast_unwind_on_malloc = true;
@@ -179,16 +180,15 @@ static void GetCurrentStackBounds(uptr *stack_top, uptr *stack_bottom) {
 }
 
 void GetStackTrace(StackTrace *stack, uptr max_s, uptr pc, uptr bp,
-                   bool fast) {
-  if (!fast) {
+                   bool request_fast_unwind) {
+  if (!StackTrace::WillUseFastUnwind(request_fast_unwind)) {
     // Block reports from our interceptors during _Unwind_Backtrace.
     SymbolizerScope sym_scope;
-    return stack->SlowUnwindStack(pc, max_s);
+    return stack->Unwind(max_s, pc, bp, 0, 0, request_fast_unwind);
   }
-
   uptr stack_top, stack_bottom;
   GetCurrentStackBounds(&stack_top, &stack_bottom);
-  stack->FastUnwindStack(pc, bp, stack_top, stack_bottom, max_s);
+  stack->Unwind(max_s, pc, bp, stack_top, stack_bottom, request_fast_unwind);
 }
 
 void PrintWarning(uptr pc, uptr bp) {
@@ -336,6 +336,7 @@ void __msan_init() {
   if (external_symbolizer && external_symbolizer[0]) {
     CHECK(external_symbolizer_started);
   }
+  Symbolizer::Get()->AddHooks(EnterSymbolizer, ExitSymbolizer);
 
   GetThreadStackTopAndBottom(/* at_initialization */true,
                              &__msan_stack_bounds.stack_top,
@@ -370,6 +371,10 @@ void __msan_set_expect_umr(int expect_umr) {
 }
 
 void __msan_print_shadow(const void *x, uptr size) {
+  if (!MEM_IS_APP(x)) {
+    Printf("Not a valid application address: %p\n", x);
+    return;
+  }
   unsigned char *s = (unsigned char*)MEM_TO_SHADOW(x);
   u32 *o = (u32*)MEM_TO_ORIGIN(x);
   for (uptr i = 0; i < size; i++) {
