@@ -85,9 +85,6 @@ if(APPLE)
     # provided by the instrumented modules.
     set(ASAN_RUNTIME_LDFLAGS
         "-undefined dynamic_lookup")
-    if (os STREQUAL "osx")
-      list(APPEND ASAN_RUNTIME_LDFLAGS "-framework Foundation")
-    endif()
     add_compiler_rt_darwin_dynamic_runtime(clang_rt.asan_${os}_dynamic ${os}
       ARCH ${ASAN_SUPPORTED_ARCH}
       SOURCES $<TARGET_OBJECTS:RTAsan.${os}>
@@ -119,7 +116,7 @@ else()
       $<TARGET_OBJECTS:RTInterception.${arch}>
       $<TARGET_OBJECTS:RTSanitizerCommon.${arch}>
       $<TARGET_OBJECTS:RTSanitizerCommonLibc.${arch}>)
-    if (NOT MSVC)
+    if (NOT WIN32)
       # We can't build Leak Sanitizer on Windows yet.
       list(APPEND ASAN_RUNTIME_OBJECTS $<TARGET_OBJECTS:RTLSanCommon.${arch}>)
     endif()
@@ -145,6 +142,10 @@ else()
 endif()
 
 add_compiler_rt_resource_file(asan_blacklist asan_blacklist.txt)
+
+# All ASan runtime dependencies.
+add_custom_target(asan_runtime_libraries
+  DEPENDS asan_blacklist ${ASAN_RUNTIME_LIBRARIES})
 
 if(LLVM_INCLUDE_TESTS)
   add_subdirectory(tests)
