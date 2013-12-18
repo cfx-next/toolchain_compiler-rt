@@ -27,11 +27,7 @@ struct StackTrace;
 const uptr kWordSize = SANITIZER_WORDSIZE / 8;
 const uptr kWordSizeInBits = 8 * kWordSize;
 
-#if defined(__powerpc__) || defined(__powerpc64__)
-const uptr kCacheLineSize = 128;
-#else
 const uptr kCacheLineSize = 64;
-#endif
 
 const uptr kMaxPathLength = 512;
 
@@ -53,6 +49,7 @@ void GetThreadStackAndTls(bool main, uptr *stk_addr, uptr *stk_size,
 void *MmapOrDie(uptr size, const char *mem_type);
 void UnmapOrDie(void *addr, uptr size);
 void *MmapFixedNoReserve(uptr fixed_addr, uptr size);
+void *MmapNoReserveOrDie(uptr size, const char *mem_type);
 void *MmapFixedOrDie(uptr fixed_addr, uptr size);
 void *Mprotect(uptr fixed_addr, uptr size);
 // Map aligned chunk of address space; size and alignment are powers of two.
@@ -128,6 +125,14 @@ bool PrintsToTtyCached();
 void Printf(const char *format, ...);
 void Report(const char *format, ...);
 void SetPrintfAndReportCallback(void (*callback)(const char *));
+#define VReport(level, ...)                                              \
+  do {                                                                   \
+    if ((uptr)common_flags()->verbosity >= (level)) Report(__VA_ARGS__); \
+  } while (0)
+#define VPrintf(level, ...)                                              \
+  do {                                                                   \
+    if ((uptr)common_flags()->verbosity >= (level)) Printf(__VA_ARGS__); \
+  } while (0)
 
 // Can be used to prevent mixing error reports from different sanitizers.
 extern StaticSpinMutex CommonSanitizerReportMutex;
@@ -136,6 +141,8 @@ extern fd_t report_fd;
 extern bool log_to_file;
 extern char report_path_prefix[4096];
 extern uptr report_fd_pid;
+extern uptr stoptheworld_tracer_pid;
+extern uptr stoptheworld_tracer_ppid;
 
 uptr OpenFile(const char *filename, bool write);
 // Opens the file 'file_name" and reads up to 'max_len' bytes.
@@ -320,8 +327,7 @@ template<typename T>
 class InternalMmapVector {
  public:
   explicit InternalMmapVector(uptr initial_capacity) {
-    CHECK_GT(initial_capacity, 0);
-    capacity_ = initial_capacity;
+    capacity_ = Max(initial_capacity, (uptr)1);
     size_ = 0;
     data_ = (T *)MmapOrDie(capacity_ * sizeof(T), "InternalMmapVector");
   }
@@ -478,6 +484,23 @@ const uptr kPthreadDestructorIterations = 0;
 
 // Callback type for iterating over a set of memory ranges.
 typedef void (*RangeIteratorCallback)(uptr begin, uptr end, void *arg);
+
+#if SANITIZER_LINUX && !defined(SANITIZER_GO)
+extern uptr indirect_call_wrapper;
+void InitializeIndirectCallWrapping(const char *wrapper_name);
+
+template <typename F>
+F IndirectExternCall(F f) {
+  typedef F (*WrapF)(F);
+  return indirect_call_wrapper ? ((WrapF)indirect_call_wrapper)(f) : f;
+}
+#else
+inline void InitializeIndirectCallWrapping(const char *wrapper_name) {}
+template <typename F>
+F IndirectExternCall(F f) {
+  return f;
+}
+#endif
 }  // namespace __sanitizer
 
 inline void *operator new(__sanitizer::operator_new_size_type size,

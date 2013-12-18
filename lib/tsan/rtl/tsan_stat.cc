@@ -126,6 +126,7 @@ void StatOutput(u64 *stat) {
   name[StatInt_strlen]                   = "  strlen                          ";
   name[StatInt_memset]                   = "  memset                          ";
   name[StatInt_memcpy]                   = "  memcpy                          ";
+  name[StatInt_textdomain]               = "  textdomain                      ";
   name[StatInt_strcmp]                   = "  strcmp                          ";
   name[StatInt_memchr]                   = "  memchr                          ";
   name[StatInt_memrchr]                  = "  memrchr                         ";
@@ -361,6 +362,7 @@ void StatOutput(u64 *stat) {
   name[StatInt_sched_getaffinity]        = "  sched_getaffinity               ";
   name[StatInt_strerror]                 = "  strerror                        ";
   name[StatInt_strerror_r]               = "  strerror_r                      ";
+  name[StatInt___xpg_strerror_r]         = "  __xpg_strerror_r                ";
   name[StatInt_scandir]                  = "  scandir                         ";
   name[StatInt_scandir64]                = "  scandir64                       ";
   name[StatInt_getgroups]                = "  getgroups                       ";
@@ -415,6 +417,8 @@ void StatOutput(u64 *stat) {
   name[StatInt_lrand48_r]                = "  lrand48_r                       ";
   name[StatInt_getline]                  = "  getline                         ";
   name[StatInt_getdelim]                 = "  getdelim                        ";
+  name[StatInt_iconv]                    = "  iconv                           ";
+  name[StatInt_times]                    = "  times                           ";
 
   name[StatInt_pthread_attr_getdetachstate]  = "  pthread_addr_getdetachstate     ";  // NOLINT
   name[StatInt_pthread_attr_getguardsize]    = "  pthread_addr_getguardsize       ";  // NOLINT

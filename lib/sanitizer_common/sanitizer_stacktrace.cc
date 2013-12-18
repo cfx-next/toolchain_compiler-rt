@@ -24,10 +24,7 @@ uptr StackTrace::GetPreviousInstructionPc(uptr pc) {
   // Cancel Thumb bit.
   pc = pc & (~1);
 #endif
-#if defined(__powerpc__) || defined(__powerpc64__)
-  // PCs are always 4 byte aligned.
-  return pc - 4;
-#elif defined(__sparc__)
+#if defined(__sparc__)
   return pc - 8;
 #else
   return pc - 1;
@@ -41,8 +38,8 @@ static void PrintStackFramePrefix(InternalScopedString *buffer, uptr frame_num,
 
 void StackTrace::PrintStack(const uptr *addr, uptr size,
                             SymbolizeCallback symbolize_callback) {
-  if (addr == 0) {
-    Printf("<empty stack>\n\n");
+  if (addr == 0 || size == 0) {
+    Printf("    <empty stack>\n\n");
     return;
   }
   MemoryMappingLayout proc_maps(/*cache_enabled*/true);
@@ -75,13 +72,16 @@ void StackTrace::PrintStack(const uptr *addr, uptr size,
       // Use our own (online) symbolizer, if necessary.
       if (Symbolizer *sym = Symbolizer::GetOrNull())
         addr_frames_num =
-            sym->SymbolizeCode(pc, addr_frames.data(), addr_frames.size());
+            sym->SymbolizePC(pc, addr_frames.data(), addr_frames.size());
       for (uptr j = 0; j < addr_frames_num; j++) {
         AddressInfo &info = addr_frames[j];
         frame_desc.clear();
         PrintStackFramePrefix(&frame_desc, frame_num, pc);
         if (info.function) {
           frame_desc.append(" in %s", info.function);
+          // Print offset in function if we don't know the source file.
+          if (!info.file && info.function_offset != AddressInfo::kUnknown)
+            frame_desc.append("+0x%zx", info.function_offset);
         }
         if (info.file) {
           frame_desc.append(" ");
@@ -128,29 +128,21 @@ void StackTrace::FastUnwindStack(uptr pc, uptr bp,
   }
   trace[0] = pc;
   size = 1;
-  uhwptr *frame = (uhwptr *)bp;
-  uhwptr *prev_frame = frame - 1;
+  uptr *frame = (uptr *)bp;
+  uptr *prev_frame = frame - 1;
   if (stack_top < 4096) return;  // Sanity check for stack top.
   // Avoid infinite loop when frame == frame[0] by using frame > prev_frame.
   while (frame > prev_frame &&
-         frame < (uhwptr *)stack_top - 2 &&
-         frame > (uhwptr *)stack_bottom &&
+         frame < (uptr *)stack_top - 2 &&
+         frame > (uptr *)stack_bottom &&
          IsAligned((uptr)frame, sizeof(*frame)) &&
          size < max_depth) {
-    uhwptr pc1 = frame[1];
+    uptr pc1 = frame[1];
     if (pc1 != pc) {
-      trace[size++] = (uptr) pc1;
+      trace[size++] = pc1;
     }
     prev_frame = frame;
-    frame = (uhwptr *)frame[0];
-  }
-}
-
-void StackTrace::PopStackFrames(uptr count) {
-  CHECK(size >= count);
-  size -= count;
-  for (uptr i = 0; i < size; i++) {
-    trace[i] = trace[i + count];
+    frame = (uptr*)frame[0];
   }
 }
 
@@ -158,10 +150,18 @@ static bool MatchPc(uptr cur_pc, uptr trace_pc, uptr threshold) {
   return cur_pc - trace_pc <= threshold || trace_pc - cur_pc <= threshold;
 }
 
+void StackTrace::PopStackFrames(uptr count) {
+  CHECK_LT(count, size);
+  size -= count;
+  for (uptr i = 0; i < size; ++i) {
+    trace[i] = trace[i + count];
+  }
+}
+
 uptr StackTrace::LocatePcInTrace(uptr pc) {
   // Use threshold to find PC in stack trace, as PC we want to unwind from may
   // slightly differ from return address in the actual unwinded stack trace.
-  const int kPcThreshold = 96;
+  const int kPcThreshold = 192;
   for (uptr i = 0; i < size; ++i) {
     if (MatchPc(pc, trace[i], kPcThreshold))
       return i;

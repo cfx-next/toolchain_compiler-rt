@@ -98,7 +98,7 @@ bool SetEnv(const char *name, const char *value) {
   setenv_ft setenv_f;
   CHECK_EQ(sizeof(setenv_f), sizeof(f));
   internal_memcpy(&setenv_f, &f, sizeof(f));
-  return setenv_f(name, value, 1) == 0;
+  return IndirectExternCall(setenv_f)(name, value, 1) == 0;
 }
 #endif
 
@@ -196,7 +196,7 @@ void InitTlsSize() {
   CHECK_NE(get_tls, 0);
   size_t tls_size = 0;
   size_t tls_align = 0;
-  get_tls(&tls_size, &tls_align);
+  IndirectExternCall(get_tls)(&tls_size, &tls_align);
   g_tls_size = tls_size;
 #endif
 }
@@ -284,9 +284,9 @@ void AdjustStackSizeLinux(void *attr_) {
   const uptr minstacksize = GetTlsSize() + 128*1024;
   if (stacksize < minstacksize) {
     if (!stack_set) {
-      if (common_flags()->verbosity && stacksize != 0)
-        Printf("Sanitizer: increasing stacksize %zu->%zu\n", stacksize,
-               minstacksize);
+      if (stacksize != 0)
+        VPrintf(1, "Sanitizer: increasing stacksize %zu->%zu\n", stacksize,
+                minstacksize);
       pthread_attr_setstacksize(attr, minstacksize);
     } else {
       Printf("Sanitizer: pre-allocated stack size is insufficient: "
@@ -352,6 +352,15 @@ uptr GetListOfModules(LoadedModule *modules, uptr max_modules,
   return data.current_n;
 }
 #endif  // SANITIZER_ANDROID
+
+#ifndef SANITIZER_GO
+uptr indirect_call_wrapper;
+
+void InitializeIndirectCallWrapping(const char *wrapper_name) {
+  CHECK(wrapper_name && *wrapper_name);
+  indirect_call_wrapper = (uptr)dlsym(RTLD_DEFAULT, wrapper_name);
+}
+#endif
 
 }  // namespace __sanitizer
 

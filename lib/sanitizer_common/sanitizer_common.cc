@@ -42,6 +42,13 @@ char report_path_prefix[sizeof(report_path_prefix)];
 // child thread will be different from |report_fd_pid|.
 uptr report_fd_pid = 0;
 
+// PID of the tracer task in StopTheWorld. It shares the address space with the
+// main process, but has a different PID and thus requires special handling.
+uptr stoptheworld_tracer_pid = 0;
+// Cached pid of parent process - if the parent process dies, we want to keep
+// writing to the same log file.
+uptr stoptheworld_tracer_ppid = 0;
+
 static DieCallbackType DieCallback;
 void SetDieCallback(DieCallbackType callback) {
   DieCallback = callback;
@@ -199,7 +206,7 @@ void ReportErrorSummary(const char *error_type, StackTrace *stack) {
     // Currently, we include the first stack frame into the report summary.
     // Maybe sometimes we need to choose another frame (e.g. skip memcpy/etc).
     uptr pc = StackTrace::GetPreviousInstructionPc(stack->trace[0]);
-    Symbolizer::Get()->SymbolizeCode(pc, &ai, 1);
+    Symbolizer::Get()->SymbolizePC(pc, &ai, 1);
   }
 #endif
   ReportErrorSummary(error_type, ai.file, ai.line, ai.function);

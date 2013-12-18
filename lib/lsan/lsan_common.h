@@ -51,6 +51,8 @@ struct Flags {
   int max_leaks;
   // If nonzero kill the process with this exit code upon finding leaks.
   int exitcode;
+  // Print matched suppressions after leak checking.
+  bool print_suppressions;
   // Suppressions file name.
   const char* suppressions;
 
@@ -63,12 +65,13 @@ struct Flags {
   bool use_registers;
   // TLS and thread-specific storage.
   bool use_tls;
+  // Regions added via __lsan_register_root_region().
+  bool use_root_regions;
 
   // Consider unaligned pointers valid.
   bool use_unaligned;
-
-  // User-visible verbosity.
-  int verbosity;
+  // Consider pointers found in poisoned memory to be valid.
+  bool use_poisoned;
 
   // Debug logging.
   bool log_pointers;
@@ -129,6 +132,8 @@ void GetAllocatorGlobalRange(uptr *begin, uptr *end);
 // Wrappers for allocator's ForceLock()/ForceUnlock().
 void LockAllocator();
 void UnlockAllocator();
+// Returns true if [addr, addr + sizeof(void *)) is poisoned.
+bool WordIsPoisoned(uptr addr);
 // Wrappers for ThreadRegistry access.
 void LockThreadRegistry();
 void UnlockThreadRegistry();

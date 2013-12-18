@@ -51,6 +51,8 @@ static void AsanDie() {
       UnmapOrDie((void*)kLowShadowBeg, kHighShadowEnd - kLowShadowBeg);
     }
   }
+  if (flags()->coverage)
+    __sanitizer_cov_dump();
   if (death_callback)
     death_callback();
   if (flags()->abort_on_error)
@@ -60,8 +62,8 @@ static void AsanDie() {
 
 static void AsanCheckFailed(const char *file, int line, const char *cond,
                             u64 v1, u64 v2) {
-  Report("AddressSanitizer CHECK failed: %s:%d \"%s\" (0x%zx, 0x%zx)\n",
-             file, line, cond, (uptr)v1, (uptr)v2);
+  Report("AddressSanitizer CHECK failed: %s:%d \"%s\" (0x%zx, 0x%zx)\n", file,
+         line, cond, (uptr)v1, (uptr)v2);
   // FIXME: check for infinite recursion without a thread-local counter here.
   PRINT_CURRENT_STACK();
   Die();
@@ -88,8 +90,9 @@ static const char *MaybeUseAsanDefaultOptionsCompileDefiniton() {
 }
 
 static void ParseFlagsFromString(Flags *f, const char *str) {
-  ParseCommonFlagsFromString(str);
-  CHECK((uptr)common_flags()->malloc_context_size <= kStackTraceMax);
+  CommonFlags *cf = common_flags();
+  ParseCommonFlagsFromString(cf, str);
+  CHECK((uptr)cf->malloc_context_size <= kStackTraceMax);
 
   ParseFlag(str, &f->quarantine_size, "quarantine_size");
   ParseFlag(str, &f->redzone, "redzone");
@@ -105,7 +108,9 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
   ParseFlag(str, &f->mac_ignore_invalid_free, "mac_ignore_invalid_free");
   ParseFlag(str, &f->detect_stack_use_after_return,
             "detect_stack_use_after_return");
-  ParseFlag(str, &f->uar_stack_size_log, "uar_stack_size_log");
+  ParseFlag(str, &f->min_uar_stack_size_log, "min_uar_stack_size_log");
+  ParseFlag(str, &f->max_uar_stack_size_log, "max_uar_stack_size_log");
+  ParseFlag(str, &f->uar_noreserve, "uar_noreserve");
   ParseFlag(str, &f->max_malloc_fill_size, "max_malloc_fill_size");
   ParseFlag(str, &f->malloc_fill_byte, "malloc_fill_byte");
   ParseFlag(str, &f->exitcode, "exitcode");
@@ -133,7 +138,7 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
 
 void InitializeFlags(Flags *f, const char *env) {
   CommonFlags *cf = common_flags();
-  SetCommonFlagDefaults();
+  SetCommonFlagsDefaults(cf);
   cf->external_symbolizer_path = GetEnv("ASAN_SYMBOLIZER_PATH");
   cf->malloc_context_size = kDefaultMallocContextSize;
 
@@ -147,7 +152,9 @@ void InitializeFlags(Flags *f, const char *env) {
   f->replace_intrin = true;
   f->mac_ignore_invalid_free = false;
   f->detect_stack_use_after_return = false;  // Also needs the compiler flag.
-  f->uar_stack_size_log = 0;
+  f->min_uar_stack_size_log = 16;  // We can't do smaller anyway.
+  f->max_uar_stack_size_log = 20;  // 1Mb per size class, i.e. ~11Mb per thread.
+  f->uar_noreserve = false;
   f->max_malloc_fill_size = 0x1000;  // By default, fill only the first 4K.
   f->malloc_fill_byte = 0xbe;
   f->exitcode = ASAN_DEFAULT_FAILURE_EXITCODE;
@@ -179,10 +186,8 @@ void InitializeFlags(Flags *f, const char *env) {
 
   // Override from user-specified string.
   ParseFlagsFromString(f, MaybeCallAsanDefaultOptions());
-  if (common_flags()->verbosity) {
-    Report("Using the defaults from __asan_default_options: %s\n",
-           MaybeCallAsanDefaultOptions());
-  }
+  VReport(1, "Using the defaults from __asan_default_options: %s\n",
+          MaybeCallAsanDefaultOptions());
 
   // Override from command line.
   ParseFlagsFromString(f, env);
@@ -456,9 +461,10 @@ void __asan_init() {
   __sanitizer_set_report_path(common_flags()->log_path);
   __asan_option_detect_stack_use_after_return =
       flags()->detect_stack_use_after_return;
+  CHECK_LE(flags()->min_uar_stack_size_log, flags()->max_uar_stack_size_log);
 
-  if (common_flags()->verbosity && options) {
-    Report("Parsed ASAN_OPTIONS: %s\n", options);
+  if (options) {
+    VReport(1, "Parsed ASAN_OPTIONS: %s\n", options);
   }
 
   // Re-exec ourselves if we need to set additional env or command line args.
@@ -528,12 +534,7 @@ void __asan_init() {
   // fork() on Mac locks the allocator.
   InitializeAllocator();
 
-  // Start symbolizer process if necessary.
-  if (common_flags()->symbolize) {
-    Symbolizer::Init(common_flags()->external_symbolizer_path);
-  } else {
-    Symbolizer::Disable();
-  }
+  Symbolizer::Init(common_flags()->external_symbolizer_path);
 
   // On Linux AsanThread::ThreadStart() calls malloc() that's why asan_inited
   // should be set to 1 prior to initializing the threads.
@@ -566,7 +567,5 @@ void __asan_init() {
   }
 #endif  // CAN_SANITIZE_LEAKS
 
-  if (common_flags()->verbosity) {
-    Report("AddressSanitizer Init done\n");
-  }
+  VReport(1, "AddressSanitizer Init done\n");
 }

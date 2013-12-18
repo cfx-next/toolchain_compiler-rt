@@ -762,7 +762,12 @@ namespace __sanitizer {
   unsigned IOCTL_TIOCSSERIAL = TIOCSSERIAL;
 #endif
 
+// EOWNERDEAD is not present in some older platforms.
+#if defined(EOWNERDEAD)
   extern const int errno_EOWNERDEAD = EOWNERDEAD;
+#else
+  extern const int errno_EOWNERDEAD = -1;
+#endif
 }  // namespace __sanitizer
 
 COMPILER_CHECK(sizeof(__sanitizer_pthread_attr_t) >= sizeof(pthread_attr_t));
@@ -938,5 +943,7 @@ CHECK_SIZE_AND_OFFSET(shmid_ds, shm_cpid);
 CHECK_SIZE_AND_OFFSET(shmid_ds, shm_lpid);
 CHECK_SIZE_AND_OFFSET(shmid_ds, shm_nattch);
 #endif
+
+CHECK_TYPE_SIZE(clock_t);
 
 #endif  // SANITIZER_LINUX || SANITIZER_MAC
