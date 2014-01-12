@@ -82,6 +82,7 @@ extern Flags lsan_flags;
 inline Flags *flags() { return &lsan_flags; }
 
 struct Leak {
+  u32 id;
   uptr hit_count;
   uptr total_size;
   u32 stack_trace_id;
@@ -89,17 +90,31 @@ struct Leak {
   bool is_suppressed;
 };
 
+struct LeakedObject {
+  u32 leak_id;
+  uptr addr;
+  uptr size;
+};
+
 // Aggregates leaks by stack trace prefix.
 class LeakReport {
  public:
-  LeakReport() : leaks_(1) {}
-  void Add(u32 stack_trace_id, uptr leaked_size, ChunkTag tag);
-  void PrintLargest(uptr max_leaks);
+  LeakReport() : next_id_(0), leaks_(1), leaked_objects_(1) {}
+  void AddLeakedChunk(uptr chunk, u32 stack_trace_id, uptr leaked_size,
+                      ChunkTag tag);
+  void ReportTopLeaks(uptr max_leaks);
   void PrintSummary();
-  bool IsEmpty() { return leaks_.size() == 0; }
-  uptr ApplySuppressions();
+  void ApplySuppressions();
+  uptr UnsuppressedLeakCount();
+
+
  private:
+  void PrintReportForLeak(uptr index);
+  void PrintLeakedObjectsForLeak(uptr index);
+
+  u32 next_id_;
   InternalMmapVector<Leak> leaks_;
+  InternalMmapVector<LeakedObject> leaked_objects_;
 };
 
 typedef InternalMmapVector<uptr> Frontier;
@@ -123,6 +138,15 @@ enum IgnoreObjectResult {
 void InitCommonLsan();
 void DoLeakCheck();
 bool DisabledInThisThread();
+
+// Special case for "new T[0]" where T is a type with DTOR.
+// new T[0] will allocate one word for the array size (0) and store a pointer
+// to the end of allocated chunk.
+inline bool IsSpecialCaseOfOperatorNew0(uptr chunk_beg, uptr chunk_size,
+                                        uptr addr) {
+  return chunk_size == sizeof(uptr) && chunk_beg + chunk_size == addr &&
+         *reinterpret_cast<uptr *>(chunk_beg) == 0;
+}
 
 // The following must be implemented in the parent tool.
 
@@ -175,6 +199,8 @@ class LsanMetadata {
 extern "C" {
 SANITIZER_INTERFACE_ATTRIBUTE SANITIZER_WEAK_ATTRIBUTE
 int __lsan_is_turned_off();
+SANITIZER_INTERFACE_ATTRIBUTE SANITIZER_WEAK_ATTRIBUTE
+int LeakSanitizerIsTurnedOffForTheCurrentProcess();
 
 SANITIZER_INTERFACE_ATTRIBUTE SANITIZER_WEAK_ATTRIBUTE
 const char *__lsan_default_suppressions();

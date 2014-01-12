@@ -314,12 +314,6 @@ INLINE int ToLower(int c) {
   return (c >= 'A' && c <= 'Z') ? (c + 'a' - 'A') : c;
 }
 
-#if SANITIZER_WORDSIZE == 64
-# define FIRST_32_SECOND_64(a, b) (b)
-#else
-# define FIRST_32_SECOND_64(a, b) (a)
-#endif
-
 // A low-level vector based on mmap. May incur a significant memory overhead for
 // small vectors.
 // WARNING: The current implementation supports only POD types.
@@ -487,7 +481,7 @@ typedef void (*RangeIteratorCallback)(uptr begin, uptr end, void *arg);
 
 #if SANITIZER_LINUX && !defined(SANITIZER_GO)
 extern uptr indirect_call_wrapper;
-void InitializeIndirectCallWrapping(const char *wrapper_name);
+void SetIndirectCallWrapper(uptr wrapper);
 
 template <typename F>
 F IndirectExternCall(F f) {
@@ -495,7 +489,7 @@ F IndirectExternCall(F f) {
   return indirect_call_wrapper ? ((WrapF)indirect_call_wrapper)(f) : f;
 }
 #else
-inline void InitializeIndirectCallWrapping(const char *wrapper_name) {}
+inline void SetIndirectCallWrapper(uptr wrapper) {}
 template <typename F>
 F IndirectExternCall(F f) {
   return f;
