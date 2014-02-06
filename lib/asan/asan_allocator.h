@@ -31,6 +31,7 @@ static const uptr kNumberOfSizeClasses = 255;
 struct AsanChunk;
 
 void InitializeAllocator();
+void ReInitializeAllocator();
 
 class AsanChunkView {
  public:
@@ -92,7 +93,8 @@ class AsanChunkFifoList: public IntrusiveList<AsanChunk> {
 
 struct AsanThreadLocalMallocStorage {
   uptr quarantine_cache[16];
-  uptr allocator2_cache[96 * (512 * 8 + 16)];  // Opaque.
+  // Allocator cache contains atomic_uint64_t which must be 8-byte aligned.
+  ALIGNED(8) uptr allocator2_cache[96 * (512 * 8 + 16)];  // Opaque.
   void CommitBack();
  private:
   // These objects are allocated via mmap() and are zero-initialized.

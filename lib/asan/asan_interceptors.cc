@@ -70,13 +70,6 @@ static inline bool RangesOverlap(const char *offset1, uptr length1,
   } \
 } while (0)
 
-#define ENSURE_ASAN_INITED() do { \
-  CHECK(!asan_init_is_running); \
-  if (!asan_inited) { \
-    __asan_init(); \
-  } \
-} while (0)
-
 static inline uptr MaybeRealStrnlen(const char *s, uptr maxlen) {
 #if ASAN_INTERCEPT_STRNLEN
   if (REAL(strnlen) != 0) {
@@ -194,7 +187,8 @@ INTERCEPTOR(int, pthread_create, void *thread,
 
 #if ASAN_INTERCEPT_SIGNAL_AND_SIGACTION
 INTERCEPTOR(void*, signal, int signum, void *handler) {
-  if (!AsanInterceptsSignal(signum) || flags()->allow_user_segv_handler) {
+  if (!AsanInterceptsSignal(signum) ||
+      common_flags()->allow_user_segv_handler) {
     return REAL(signal)(signum, handler);
   }
   return 0;
@@ -202,11 +196,20 @@ INTERCEPTOR(void*, signal, int signum, void *handler) {
 
 INTERCEPTOR(int, sigaction, int signum, const struct sigaction *act,
                             struct sigaction *oldact) {
-  if (!AsanInterceptsSignal(signum) || flags()->allow_user_segv_handler) {
+  if (!AsanInterceptsSignal(signum) ||
+      common_flags()->allow_user_segv_handler) {
     return REAL(sigaction)(signum, act, oldact);
   }
   return 0;
 }
+
+namespace __sanitizer {
+int real_sigaction(int signum, const void *act, void *oldact) {
+  return REAL(sigaction)(signum,
+                         (struct sigaction *)act, (struct sigaction *)oldact);
+}
+}  // namespace __sanitizer
+
 #elif SANITIZER_POSIX
 // We need to have defined REAL(sigaction) on posix systems.
 DEFINE_REAL(int, sigaction, int signum, const struct sigaction *act,

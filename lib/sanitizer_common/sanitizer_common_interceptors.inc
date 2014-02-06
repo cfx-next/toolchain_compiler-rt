@@ -29,6 +29,7 @@
 //===----------------------------------------------------------------------===//
 #include "interception/interception.h"
 #include "sanitizer_platform_interceptors.h"
+#include "sanitizer_tls_get_addr.h"
 
 #include <stdarg.h>
 
@@ -569,9 +570,23 @@ INTERCEPTOR(char *, strptime, char *s, char *format, __sanitizer_tm *tm) {
 #define INIT_STRPTIME
 #endif
 
-#if SANITIZER_INTERCEPT_SCANF
+#if SANITIZER_INTERCEPT_SCANF || SANITIZER_INTERCEPT_PRINTF
+#include "sanitizer_common_interceptors_format.inc"
 
-#include "sanitizer_common_interceptors_scanf.inc"
+#define FORMAT_INTERCEPTOR_IMPL(name, vname, ...)                              \
+  {                                                                            \
+    void *ctx;                                                                 \
+    va_list ap;                                                                \
+    va_start(ap, format);                                                      \
+    COMMON_INTERCEPTOR_ENTER(ctx, vname, __VA_ARGS__, ap);                     \
+    int res = WRAP(vname)(__VA_ARGS__, ap);                                    \
+    va_end(ap);                                                                \
+    return res;                                                                \
+  }
+
+#endif
+
+#if SANITIZER_INTERCEPT_SCANF
 
 #define VSCANF_INTERCEPTOR_IMPL(vname, allowGnuMalloc, ...)                    \
   {                                                                            \
@@ -607,35 +622,24 @@ INTERCEPTOR(int, __isoc99_vfscanf, void *stream, const char *format, va_list ap)
 VSCANF_INTERCEPTOR_IMPL(__isoc99_vfscanf, false, stream, format, ap)
 #endif  // SANITIZER_INTERCEPT_ISOC99_SCANF
 
-#define SCANF_INTERCEPTOR_IMPL(name, vname, ...)                               \
-  {                                                                            \
-    void *ctx;                                                                 \
-    va_list ap;                                                                \
-    va_start(ap, format);                                                      \
-    COMMON_INTERCEPTOR_ENTER(ctx, vname, __VA_ARGS__, ap);                     \
-    int res = vname(__VA_ARGS__, ap);                                          \
-    va_end(ap);                                                                \
-    return res;                                                                \
-  }
-
 INTERCEPTOR(int, scanf, const char *format, ...)
-SCANF_INTERCEPTOR_IMPL(scanf, vscanf, format)
+FORMAT_INTERCEPTOR_IMPL(scanf, vscanf, format)
 
 INTERCEPTOR(int, fscanf, void *stream, const char *format, ...)
-SCANF_INTERCEPTOR_IMPL(fscanf, vfscanf, stream, format)
+FORMAT_INTERCEPTOR_IMPL(fscanf, vfscanf, stream, format)
 
 INTERCEPTOR(int, sscanf, const char *str, const char *format, ...)
-SCANF_INTERCEPTOR_IMPL(sscanf, vsscanf, str, format)
+FORMAT_INTERCEPTOR_IMPL(sscanf, vsscanf, str, format)
 
 #if SANITIZER_INTERCEPT_ISOC99_SCANF
 INTERCEPTOR(int, __isoc99_scanf, const char *format, ...)
-SCANF_INTERCEPTOR_IMPL(__isoc99_scanf, __isoc99_vscanf, format)
+FORMAT_INTERCEPTOR_IMPL(__isoc99_scanf, __isoc99_vscanf, format)
 
 INTERCEPTOR(int, __isoc99_fscanf, void *stream, const char *format, ...)
-SCANF_INTERCEPTOR_IMPL(__isoc99_fscanf, __isoc99_vfscanf, stream, format)
+FORMAT_INTERCEPTOR_IMPL(__isoc99_fscanf, __isoc99_vfscanf, stream, format)
 
 INTERCEPTOR(int, __isoc99_sscanf, const char *str, const char *format, ...)
-SCANF_INTERCEPTOR_IMPL(__isoc99_sscanf, __isoc99_vsscanf, str, format)
+FORMAT_INTERCEPTOR_IMPL(__isoc99_sscanf, __isoc99_vsscanf, str, format)
 #endif
 
 #endif
@@ -664,6 +668,169 @@ SCANF_INTERCEPTOR_IMPL(__isoc99_sscanf, __isoc99_vsscanf, str, format)
 #define INIT_ISOC99_SCANF
 #endif
 
+#if SANITIZER_INTERCEPT_PRINTF
+
+#define VPRINTF_INTERCEPTOR_ENTER(vname, ...)                                  \
+  void *ctx;                                                                   \
+  COMMON_INTERCEPTOR_ENTER(ctx, vname, __VA_ARGS__);                           \
+  va_list aq;                                                                  \
+  va_copy(aq, ap);
+
+#define VPRINTF_INTERCEPTOR_RETURN()                                           \
+  va_end(aq);
+
+#define VPRINTF_INTERCEPTOR_IMPL(vname, ...)                                   \
+  {                                                                            \
+    VPRINTF_INTERCEPTOR_ENTER(vname, __VA_ARGS__);                             \
+    if (common_flags()->check_printf)                                          \
+      printf_common(ctx, format, aq);                                          \
+    int res = REAL(vname)(__VA_ARGS__);                                        \
+    VPRINTF_INTERCEPTOR_RETURN();                                              \
+    return res;                                                                \
+  }
+
+#define VSPRINTF_INTERCEPTOR_IMPL(vname, str, ...)                             \
+  {                                                                            \
+    VPRINTF_INTERCEPTOR_ENTER(vname, str, __VA_ARGS__)                         \
+    if (common_flags()->check_printf) {                                        \
+      printf_common(ctx, format, aq);                                          \
+    }                                                                          \
+    int res = REAL(vname)(str, __VA_ARGS__);                                   \
+    if (res >= 0 && common_flags()->check_printf) {                            \
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, str, res + 1);                       \
+    }                                                                          \
+    VPRINTF_INTERCEPTOR_RETURN();                                              \
+    return res;                                                                \
+  }
+
+#define VSNPRINTF_INTERCEPTOR_IMPL(vname, str, size, ...)                      \
+  {                                                                            \
+    VPRINTF_INTERCEPTOR_ENTER(vname, str, size, __VA_ARGS__)                   \
+    if (common_flags()->check_printf) {                                        \
+      printf_common(ctx, format, aq);                                          \
+    }                                                                          \
+    int res = REAL(vname)(str, size, __VA_ARGS__);                             \
+    if (res >= 0 && common_flags()->check_printf) {                            \
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, str, Min(size, (SIZE_T)(res + 1)));  \
+    }                                                                          \
+    VPRINTF_INTERCEPTOR_RETURN();                                              \
+    return res;                                                                \
+  }
+
+#define VASPRINTF_INTERCEPTOR_IMPL(vname, strp, ...)                           \
+  {                                                                            \
+    VPRINTF_INTERCEPTOR_ENTER(vname, strp, __VA_ARGS__)                        \
+    if (common_flags()->check_printf) {                                        \
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, strp, sizeof(char *));               \
+      printf_common(ctx, format, aq);                                          \
+    }                                                                          \
+    int res = REAL(vname)(strp, __VA_ARGS__);                                  \
+    if (res >= 0 && common_flags()->check_printf) {                            \
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, *strp, res + 1);                     \
+    }                                                                          \
+    VPRINTF_INTERCEPTOR_RETURN();                                              \
+    return res;                                                                \
+  }
+
+INTERCEPTOR(int, vprintf, const char *format, va_list ap)
+VPRINTF_INTERCEPTOR_IMPL(vprintf, format, ap)
+
+INTERCEPTOR(int, vfprintf, void *stream, const char *format, va_list ap)
+VPRINTF_INTERCEPTOR_IMPL(vfprintf, stream, format, ap)
+
+INTERCEPTOR(int, vsnprintf, char *str, SIZE_T size, const char *format,
+            va_list ap)
+VSNPRINTF_INTERCEPTOR_IMPL(vsnprintf, str, size, format, ap)
+
+INTERCEPTOR(int, vsprintf, char *str, const char *format, va_list ap)
+VSPRINTF_INTERCEPTOR_IMPL(vsprintf, str, format, ap)
+
+INTERCEPTOR(int, vasprintf, char **strp, const char *format, va_list ap)
+VASPRINTF_INTERCEPTOR_IMPL(vasprintf, strp, format, ap)
+
+#if SANITIZER_INTERCEPT_ISOC99_PRINTF
+INTERCEPTOR(int, __isoc99_vprintf, const char *format, va_list ap)
+VPRINTF_INTERCEPTOR_IMPL(__isoc99_vprintf, format, ap)
+
+INTERCEPTOR(int, __isoc99_vfprintf, void *stream, const char *format,
+            va_list ap)
+VPRINTF_INTERCEPTOR_IMPL(__isoc99_vfprintf, stream, format, ap)
+
+INTERCEPTOR(int, __isoc99_vsnprintf, char *str, SIZE_T size, const char *format,
+            va_list ap)
+VSNPRINTF_INTERCEPTOR_IMPL(__isoc99_vsnprintf, str, size, format, ap)
+
+INTERCEPTOR(int, __isoc99_vsprintf, char *str, const char *format,
+            va_list ap)
+VSPRINTF_INTERCEPTOR_IMPL(__isoc99_vsprintf, str, format,
+                          ap)
+
+#endif  // SANITIZER_INTERCEPT_ISOC99_PRINTF
+
+INTERCEPTOR(int, printf, const char *format, ...)
+FORMAT_INTERCEPTOR_IMPL(printf, vprintf, format)
+
+INTERCEPTOR(int, fprintf, void *stream, const char *format, ...)
+FORMAT_INTERCEPTOR_IMPL(fprintf, vfprintf, stream, format)
+
+INTERCEPTOR(int, sprintf, char *str, const char *format, ...) // NOLINT
+FORMAT_INTERCEPTOR_IMPL(sprintf, vsprintf, str, format) // NOLINT
+
+INTERCEPTOR(int, snprintf, char *str, SIZE_T size, const char *format, ...)
+FORMAT_INTERCEPTOR_IMPL(snprintf, vsnprintf, str, size, format)
+
+INTERCEPTOR(int, asprintf, char **strp, const char *format, ...)
+FORMAT_INTERCEPTOR_IMPL(asprintf, vasprintf, strp, format)
+
+#if SANITIZER_INTERCEPT_ISOC99_PRINTF
+INTERCEPTOR(int, __isoc99_printf, const char *format, ...)
+FORMAT_INTERCEPTOR_IMPL(__isoc99_printf, __isoc99_vprintf, format)
+
+INTERCEPTOR(int, __isoc99_fprintf, void *stream, const char *format, ...)
+FORMAT_INTERCEPTOR_IMPL(__isoc99_fprintf, __isoc99_vfprintf, stream, format)
+
+INTERCEPTOR(int, __isoc99_sprintf, char *str, const char *format, ...)
+FORMAT_INTERCEPTOR_IMPL(__isoc99_sprintf, __isoc99_vsprintf, str, format)
+
+INTERCEPTOR(int, __isoc99_snprintf, char *str, SIZE_T size,
+            const char *format, ...)
+FORMAT_INTERCEPTOR_IMPL(__isoc99_snprintf, __isoc99_vsnprintf, str, size,
+                        format)
+
+#endif  // SANITIZER_INTERCEPT_ISOC99_PRINTF
+
+#endif  // SANITIZER_INTERCEPT_PRINTF
+
+#if SANITIZER_INTERCEPT_PRINTF
+#define INIT_PRINTF                     \
+  COMMON_INTERCEPT_FUNCTION(printf);    \
+  COMMON_INTERCEPT_FUNCTION(sprintf);   \
+  COMMON_INTERCEPT_FUNCTION(snprintf);  \
+  COMMON_INTERCEPT_FUNCTION(asprintf);  \
+  COMMON_INTERCEPT_FUNCTION(fprintf);   \
+  COMMON_INTERCEPT_FUNCTION(vprintf);   \
+  COMMON_INTERCEPT_FUNCTION(vsprintf);  \
+  COMMON_INTERCEPT_FUNCTION(vsnprintf); \
+  COMMON_INTERCEPT_FUNCTION(vasprintf); \
+  COMMON_INTERCEPT_FUNCTION(vfprintf);
+#else
+#define INIT_PRINTF
+#endif
+
+#if SANITIZER_INTERCEPT_ISOC99_PRINTF
+#define INIT_ISOC99_PRINTF                       \
+  COMMON_INTERCEPT_FUNCTION(__isoc99_printf);    \
+  COMMON_INTERCEPT_FUNCTION(__isoc99_sprintf);   \
+  COMMON_INTERCEPT_FUNCTION(__isoc99_snprintf);  \
+  COMMON_INTERCEPT_FUNCTION(__isoc99_fprintf);   \
+  COMMON_INTERCEPT_FUNCTION(__isoc99_vprintf);   \
+  COMMON_INTERCEPT_FUNCTION(__isoc99_vsprintf);  \
+  COMMON_INTERCEPT_FUNCTION(__isoc99_vsnprintf); \
+  COMMON_INTERCEPT_FUNCTION(__isoc99_vfprintf);
+#else
+#define INIT_ISOC99_PRINTF
+#endif
+
 #if SANITIZER_INTERCEPT_IOCTL
 #include "sanitizer_common_interceptors_ioctl.inc"
 INTERCEPTOR(int, ioctl, int d, unsigned request, void *arg) {
@@ -677,7 +844,14 @@ INTERCEPTOR(int, ioctl, int d, unsigned request, void *arg) {
   if (!common_flags()->handle_ioctl) return REAL(ioctl)(d, request, arg);
 
   const ioctl_desc *desc = ioctl_lookup(request);
-  if (!desc) Printf("WARNING: unknown ioctl %x\n", request);
+  ioctl_desc decoded_desc;
+  if (!desc) {
+    VPrintf(2, "Decoding unknown ioctl 0x%x\n", request);
+    if (!ioctl_decode(request, &decoded_desc))
+      Printf("WARNING: failed decoding unknown ioctl 0x%x\n", request);
+    else
+      desc = &decoded_desc;
+  }
 
   if (desc) ioctl_common_pre(ctx, desc, d, request, arg);
   int res = REAL(ioctl)(d, request, arg);
@@ -2586,10 +2760,11 @@ INTERCEPTOR(int, pthread_attr_getstack, void *attr, void **addr, SIZE_T *size) {
 // We may need to call the real pthread_attr_getstack from the run-time
 // in sanitizer_common, but we don't want to include the interception headers
 // there. So, just define this function here.
-extern "C" int __sanitizer_pthread_attr_getstack(void *attr, void **addr,
-                                                 SIZE_T *size) {
+namespace __sanitizer {
+int real_pthread_attr_getstack(void *attr, void **addr, SIZE_T *size) {
   return REAL(pthread_attr_getstack)(attr, addr, size);
 }
+}  // namespace __sanitizer
 
 #define INIT_PTHREAD_ATTR_GET                             \
   COMMON_INTERCEPT_FUNCTION(pthread_attr_getdetachstate); \
@@ -2901,6 +3076,157 @@ INTERCEPTOR(__sanitizer_clock_t, times, void *tms) {
 #define INIT_TIMES
 #endif
 
+#if SANITIZER_INTERCEPT_TLS_GET_ADDR
+#define INIT_TLS_GET_ADDR COMMON_INTERCEPT_FUNCTION(__tls_get_addr)
+INTERCEPTOR(void *, __tls_get_addr, void *arg) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, __tls_get_addr, arg);
+  void *res = REAL(__tls_get_addr)(arg);
+  DTLS_on_tls_get_addr(arg, res);
+  return res;
+}
+#else
+#define INIT_TLS_GET_ADDR
+#endif
+
+#if SANITIZER_INTERCEPT_LISTXATTR
+INTERCEPTOR(SSIZE_T, listxattr, const char *path, char *list, SIZE_T size) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, listxattr, path, list, size);
+  if (path) COMMON_INTERCEPTOR_READ_RANGE(ctx, path, REAL(strlen)(path) + 1);
+  SSIZE_T res = REAL(listxattr)(path, list, size);
+  // Here and below, size == 0 is a special case where nothing is written to the
+  // buffer, and res contains the desired buffer size.
+  if (size && res > 0 && list) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, list, res);
+  return res;
+}
+INTERCEPTOR(SSIZE_T, llistxattr, const char *path, char *list, SIZE_T size) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, llistxattr, path, list, size);
+  if (path) COMMON_INTERCEPTOR_READ_RANGE(ctx, path, REAL(strlen)(path) + 1);
+  SSIZE_T res = REAL(llistxattr)(path, list, size);
+  if (size && res > 0 && list) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, list, res);
+  return res;
+}
+INTERCEPTOR(SSIZE_T, flistxattr, int fd, char *list, SIZE_T size) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, flistxattr, fd, list, size);
+  SSIZE_T res = REAL(flistxattr)(fd, list, size);
+  if (size && res > 0 && list) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, list, res);
+  return res;
+}
+#define INIT_LISTXATTR                   \
+  COMMON_INTERCEPT_FUNCTION(listxattr);  \
+  COMMON_INTERCEPT_FUNCTION(llistxattr); \
+  COMMON_INTERCEPT_FUNCTION(flistxattr);
+#else
+#define INIT_LISTXATTR
+#endif
+
+#if SANITIZER_INTERCEPT_GETXATTR
+INTERCEPTOR(SSIZE_T, getxattr, const char *path, const char *name, char *value,
+            SIZE_T size) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, getxattr, path, name, value, size);
+  if (path) COMMON_INTERCEPTOR_READ_RANGE(ctx, path, REAL(strlen)(path) + 1);
+  if (name) COMMON_INTERCEPTOR_READ_RANGE(ctx, name, REAL(strlen)(name) + 1);
+  SSIZE_T res = REAL(getxattr)(path, name, value, size);
+  if (size && res > 0 && value) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, value, res);
+  return res;
+}
+INTERCEPTOR(SSIZE_T, lgetxattr, const char *path, const char *name, char *value,
+            SIZE_T size) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, lgetxattr, path, name, value, size);
+  if (path) COMMON_INTERCEPTOR_READ_RANGE(ctx, path, REAL(strlen)(path) + 1);
+  if (name) COMMON_INTERCEPTOR_READ_RANGE(ctx, name, REAL(strlen)(name) + 1);
+  SSIZE_T res = REAL(lgetxattr)(path, name, value, size);
+  if (size && res > 0 && value) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, value, res);
+  return res;
+}
+INTERCEPTOR(SSIZE_T, fgetxattr, int fd, const char *name, char *value,
+            SIZE_T size) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, fgetxattr, fd, name, value, size);
+  if (name) COMMON_INTERCEPTOR_READ_RANGE(ctx, name, REAL(strlen)(name) + 1);
+  SSIZE_T res = REAL(fgetxattr)(fd, name, value, size);
+  if (size && res > 0 && value) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, value, res);
+  return res;
+}
+#define INIT_GETXATTR                   \
+  COMMON_INTERCEPT_FUNCTION(getxattr);  \
+  COMMON_INTERCEPT_FUNCTION(lgetxattr); \
+  COMMON_INTERCEPT_FUNCTION(fgetxattr);
+#else
+#define INIT_GETXATTR
+#endif
+
+#if SANITIZER_INTERCEPT_GETRESID
+INTERCEPTOR(int, getresuid, void *ruid, void *euid, void *suid) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, getresuid, ruid, euid, suid);
+  int res = REAL(getresuid)(ruid, euid, suid);
+  if (res >= 0) {
+    if (ruid) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, ruid, uid_t_sz);
+    if (euid) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, euid, uid_t_sz);
+    if (suid) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, suid, uid_t_sz);
+  }
+  return res;
+}
+INTERCEPTOR(int, getresgid, void *rgid, void *egid, void *sgid) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, getresgid, rgid, egid, sgid);
+  int res = REAL(getresgid)(rgid, egid, sgid);
+  if (res >= 0) {
+    if (rgid) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, rgid, gid_t_sz);
+    if (egid) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, egid, gid_t_sz);
+    if (sgid) COMMON_INTERCEPTOR_WRITE_RANGE(ctx, sgid, gid_t_sz);
+  }
+  return res;
+}
+#define INIT_GETRESID                   \
+  COMMON_INTERCEPT_FUNCTION(getresuid); \
+  COMMON_INTERCEPT_FUNCTION(getresgid);
+#else
+#define INIT_GETRESID
+#endif
+
+#if SANITIZER_INTERCEPT_GETIFADDRS
+// As long as getifaddrs()/freeifaddrs() use calloc()/free(), we don't need to
+// intercept freeifaddrs(). If that ceases to be the case, we might need to
+// intercept it to poison the memory again.
+INTERCEPTOR(int, getifaddrs, __sanitizer_ifaddrs **ifap) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, getifaddrs, ifap);
+  int res = REAL(getifaddrs)(ifap);
+  if (res == 0 && ifap) {
+    COMMON_INTERCEPTOR_WRITE_RANGE(ctx, ifap, sizeof(void *));
+    __sanitizer_ifaddrs *p = *ifap;
+    while (p) {
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, p, sizeof(__sanitizer_ifaddrs));
+      if (p->ifa_name)
+        COMMON_INTERCEPTOR_WRITE_RANGE(ctx, p->ifa_name,
+                                       REAL(strlen)(p->ifa_name) + 1);
+      if (p->ifa_addr)
+        COMMON_INTERCEPTOR_WRITE_RANGE(ctx, p->ifa_addr, struct_sockaddr_sz);
+      if (p->ifa_netmask)
+        COMMON_INTERCEPTOR_WRITE_RANGE(ctx, p->ifa_netmask, struct_sockaddr_sz);
+      // On Linux this is a union, but the other member also points to a
+      // struct sockaddr, so the following is sufficient.
+      if (p->ifa_dstaddr)
+        COMMON_INTERCEPTOR_WRITE_RANGE(ctx, p->ifa_dstaddr, struct_sockaddr_sz);
+      // FIXME(smatveev): Unpoison p->ifa_data as well.
+      p = p->ifa_next;
+    }
+  }
+  return res;
+}
+#define INIT_GETIFADDRS                  \
+  COMMON_INTERCEPT_FUNCTION(getifaddrs);
+#else
+#define INIT_GETIFADDRS
+#endif
+
 #define SANITIZER_COMMON_INTERCEPTORS_INIT \
   INIT_TEXTDOMAIN;                         \
   INIT_STRCMP;                             \
@@ -2924,6 +3250,8 @@ INTERCEPTOR(__sanitizer_clock_t, times, void *tms) {
   INIT_STRPTIME;                           \
   INIT_SCANF;                              \
   INIT_ISOC99_SCANF;                       \
+  INIT_PRINTF;                             \
+  INIT_ISOC99_PRINTF;                      \
   INIT_FREXP;                              \
   INIT_FREXPF_FREXPL;                      \
   INIT_GETPWNAM_AND_FRIENDS;               \
@@ -3014,4 +3342,9 @@ INTERCEPTOR(__sanitizer_clock_t, times, void *tms) {
   INIT_GETLINE;                            \
   INIT_ICONV;                              \
   INIT_TIMES;                              \
+  INIT_TLS_GET_ADDR;                       \
+  INIT_LISTXATTR;                          \
+  INIT_GETXATTR;                           \
+  INIT_GETRESID;                           \
+  INIT_GETIFADDRS;
 /**/

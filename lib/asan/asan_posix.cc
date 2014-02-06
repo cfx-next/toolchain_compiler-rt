@@ -30,66 +30,15 @@
 #include <sys/resource.h>
 #include <unistd.h>
 
-static const uptr kAltStackSize = SIGSTKSZ * 4;  // SIGSTKSZ is not enough.
-
 namespace __asan {
 
-static void MaybeInstallSigaction(int signum,
-                                  void (*handler)(int, siginfo_t *, void *)) {
-  if (!AsanInterceptsSignal(signum))
-    return;
-  struct sigaction sigact;
-  REAL(memset)(&sigact, 0, sizeof(sigact));
-  sigact.sa_sigaction = handler;
-  sigact.sa_flags = SA_SIGINFO;
-  if (flags()->use_sigaltstack) sigact.sa_flags |= SA_ONSTACK;
-  CHECK_EQ(0, REAL(sigaction)(signum, &sigact, 0));
-  VReport(1, "Installed the sigaction for signal %d\n", signum);
-}
-
-static void     ASAN_OnSIGSEGV(int, siginfo_t *siginfo, void *context) {
-  uptr addr = (uptr)siginfo->si_addr;
+void AsanOnSIGSEGV(int, void *siginfo, void *context) {
+  uptr addr = (uptr)((siginfo_t*)siginfo)->si_addr;
   // Write the first message using the bullet-proof write.
   if (13 != internal_write(2, "ASAN:SIGSEGV\n", 13)) Die();
   uptr pc, sp, bp;
   GetPcSpBp(context, &pc, &sp, &bp);
   ReportSIGSEGV(pc, sp, bp, addr);
-}
-
-void SetAlternateSignalStack() {
-  stack_t altstack, oldstack;
-  CHECK_EQ(0, sigaltstack(0, &oldstack));
-  // If the alternate stack is already in place, do nothing.
-  if ((oldstack.ss_flags & SS_DISABLE) == 0) return;
-  // TODO(glider): the mapped stack should have the MAP_STACK flag in the
-  // future. It is not required by man 2 sigaltstack now (they're using
-  // malloc()).
-  void* base = MmapOrDie(kAltStackSize, __FUNCTION__);
-  altstack.ss_sp = base;
-  altstack.ss_flags = 0;
-  altstack.ss_size = kAltStackSize;
-  CHECK_EQ(0, sigaltstack(&altstack, 0));
-  VReport(1, "Alternative stack for T%d set: [%p,%p)\n",
-          GetCurrentTidOrInvalid(), altstack.ss_sp,
-          (char *)altstack.ss_sp + altstack.ss_size);
-}
-
-void UnsetAlternateSignalStack() {
-  stack_t altstack, oldstack;
-  altstack.ss_sp = 0;
-  altstack.ss_flags = SS_DISABLE;
-  altstack.ss_size = 0;
-  CHECK_EQ(0, sigaltstack(&altstack, &oldstack));
-  UnmapOrDie(oldstack.ss_sp, oldstack.ss_size);
-}
-
-void InstallSignalHandlers() {
-  // Set the alternate signal stack for the main thread.
-  // This will cause SetAlternateSignalStack to be called twice, but the stack
-  // will be actually set only once.
-  if (flags()->use_sigaltstack) SetAlternateSignalStack();
-  MaybeInstallSigaction(SIGSEGV, ASAN_OnSIGSEGV);
-  MaybeInstallSigaction(SIGBUS, ASAN_OnSIGSEGV);
 }
 
 // ---------------------- TSD ---------------- {{{1

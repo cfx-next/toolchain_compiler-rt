@@ -11,6 +11,7 @@
 //
 // Main file of the ASan run-time library.
 //===----------------------------------------------------------------------===//
+#include "asan_activation.h"
 #include "asan_allocator.h"
 #include "asan_interceptors.h"
 #include "asan_interface_internal.h"
@@ -120,9 +121,6 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
   ParseFlag(str, &f->exitcode, "exitcode");
   ParseFlag(str, &f->allow_user_poisoning, "allow_user_poisoning");
   ParseFlag(str, &f->sleep_before_dying, "sleep_before_dying");
-  ParseFlag(str, &f->handle_segv, "handle_segv");
-  ParseFlag(str, &f->allow_user_segv_handler, "allow_user_segv_handler");
-  ParseFlag(str, &f->use_sigaltstack, "use_sigaltstack");
   ParseFlag(str, &f->check_malloc_usable_size, "check_malloc_usable_size");
   ParseFlag(str, &f->unmap_shadow_on_exit, "unmap_shadow_on_exit");
   ParseFlag(str, &f->abort_on_error, "abort_on_error");
@@ -138,6 +136,7 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
   ParseFlag(str, &f->alloc_dealloc_mismatch, "alloc_dealloc_mismatch");
   ParseFlag(str, &f->strict_memcmp, "strict_memcmp");
   ParseFlag(str, &f->strict_init_order, "strict_init_order");
+  ParseFlag(str, &f->start_deactivated, "start_deactivated");
 }
 
 void InitializeFlags(Flags *f, const char *env) {
@@ -165,9 +164,6 @@ void InitializeFlags(Flags *f, const char *env) {
   f->exitcode = ASAN_DEFAULT_FAILURE_EXITCODE;
   f->allow_user_poisoning = true;
   f->sleep_before_dying = 0;
-  f->handle_segv = ASAN_NEEDS_SEGV;
-  f->allow_user_segv_handler = false;
-  f->use_sigaltstack = false;
   f->check_malloc_usable_size = true;
   f->unmap_shadow_on_exit = false;
   f->abort_on_error = false;
@@ -185,6 +181,7 @@ void InitializeFlags(Flags *f, const char *env) {
   f->alloc_dealloc_mismatch = (SANITIZER_MAC == 0) && (SANITIZER_WINDOWS == 0);
   f->strict_memcmp = true;
   f->strict_init_order = false;
+  f->start_deactivated = false;
 
   // Override from compile definition.
   ParseFlagsFromString(f, MaybeUseAsanDefaultOptionsCompileDefiniton());
@@ -210,6 +207,17 @@ void InitializeFlags(Flags *f, const char *env) {
   if (f->strict_init_order) {
     f->check_initialization_order = true;
   }
+}
+
+// Parse flags that may change between startup and activation.
+// On Android they come from a system property.
+// On other platforms this is no-op.
+void ParseExtraActivationFlags() {
+  char buf[100];
+  GetExtraActivationFlags(buf, sizeof(buf));
+  ParseFlagsFromString(flags(), buf);
+  if (buf[0] != '\0')
+    VReport(1, "Extra activation flags: %s\n", buf);
 }
 
 // -------------------------- Globals --------------------- {{{1
@@ -397,55 +405,7 @@ static void PrintAddressSpaceLayout() {
           kHighShadowBeg > kMidMemEnd);
 }
 
-}  // namespace __asan
-
-// ---------------------- Interface ---------------- {{{1
-using namespace __asan;  // NOLINT
-
-#if !SANITIZER_SUPPORTS_WEAK_HOOKS
-extern "C" {
-SANITIZER_INTERFACE_ATTRIBUTE SANITIZER_WEAK_ATTRIBUTE
-const char* __asan_default_options() { return ""; }
-}  // extern "C"
-#endif
-
-int NOINLINE __asan_set_error_exit_code(int exit_code) {
-  int old = flags()->exitcode;
-  flags()->exitcode = exit_code;
-  return old;
-}
-
-void NOINLINE __asan_handle_no_return() {
-  int local_stack;
-  AsanThread *curr_thread = GetCurrentThread();
-  CHECK(curr_thread);
-  uptr PageSize = GetPageSizeCached();
-  uptr top = curr_thread->stack_top();
-  uptr bottom = ((uptr)&local_stack - PageSize) & ~(PageSize-1);
-  static const uptr kMaxExpectedCleanupSize = 64 << 20;  // 64M
-  if (top - bottom > kMaxExpectedCleanupSize) {
-    static bool reported_warning = false;
-    if (reported_warning)
-      return;
-    reported_warning = true;
-    Report("WARNING: ASan is ignoring requested __asan_handle_no_return: "
-           "stack top: %p; bottom %p; size: %p (%zd)\n"
-           "False positive error reports may follow\n"
-           "For details see "
-           "http://code.google.com/p/address-sanitizer/issues/detail?id=189\n",
-           top, bottom, top - bottom, top - bottom);
-    return;
-  }
-  PoisonShadow(bottom, top - bottom, 0);
-  if (curr_thread->has_fake_stack())
-    curr_thread->fake_stack()->HandleNoReturn();
-}
-
-void NOINLINE __asan_set_death_callback(void (*callback)(void)) {
-  death_callback = callback;
-}
-
-void __asan_init() {
+static void AsanInitInternal() {
   if (asan_inited) return;
   SanitizerToolName = "AddressSanitizer";
   CHECK(!asan_init_is_running && "ASan init calls itself!");
@@ -464,6 +424,10 @@ void __asan_init() {
   // initialization steps look at flags().
   const char *options = GetEnv("ASAN_OPTIONS");
   InitializeFlags(flags(), options);
+
+  if (!flags()->start_deactivated)
+    ParseExtraActivationFlags();
+
   __sanitizer_set_report_path(common_flags()->log_path);
   __asan_option_detect_stack_use_after_return =
       flags()->detect_stack_use_after_return;
@@ -472,6 +436,9 @@ void __asan_init() {
   if (options) {
     VReport(1, "Parsed ASAN_OPTIONS: %s\n", options);
   }
+
+  if (flags()->start_deactivated)
+    AsanStartDeactivated();
 
   // Re-exec ourselves if we need to set additional env or command line args.
   MaybeReexec();
@@ -534,7 +501,7 @@ void __asan_init() {
   }
 
   AsanTSDInit(PlatformTSDDtor);
-  InstallSignalHandlers();
+  InstallDeadlySignalHandlers(AsanOnSIGSEGV);
 
   // Allocator should be initialized before starting external symbolizer, as
   // fork() on Mac locks the allocator.
@@ -574,4 +541,65 @@ void __asan_init() {
 #endif  // CAN_SANITIZE_LEAKS
 
   VReport(1, "AddressSanitizer Init done\n");
+}
+
+// Initialize as requested from some part of ASan runtime library (interceptors,
+// allocator, etc).
+void AsanInitFromRtl() {
+  AsanInitInternal();
+}
+
+}  // namespace __asan
+
+// ---------------------- Interface ---------------- {{{1
+using namespace __asan;  // NOLINT
+
+#if !SANITIZER_SUPPORTS_WEAK_HOOKS
+extern "C" {
+SANITIZER_INTERFACE_ATTRIBUTE SANITIZER_WEAK_ATTRIBUTE
+const char* __asan_default_options() { return ""; }
+}  // extern "C"
+#endif
+
+int NOINLINE __asan_set_error_exit_code(int exit_code) {
+  int old = flags()->exitcode;
+  flags()->exitcode = exit_code;
+  return old;
+}
+
+void NOINLINE __asan_handle_no_return() {
+  int local_stack;
+  AsanThread *curr_thread = GetCurrentThread();
+  CHECK(curr_thread);
+  uptr PageSize = GetPageSizeCached();
+  uptr top = curr_thread->stack_top();
+  uptr bottom = ((uptr)&local_stack - PageSize) & ~(PageSize-1);
+  static const uptr kMaxExpectedCleanupSize = 64 << 20;  // 64M
+  if (top - bottom > kMaxExpectedCleanupSize) {
+    static bool reported_warning = false;
+    if (reported_warning)
+      return;
+    reported_warning = true;
+    Report("WARNING: ASan is ignoring requested __asan_handle_no_return: "
+           "stack top: %p; bottom %p; size: %p (%zd)\n"
+           "False positive error reports may follow\n"
+           "For details see "
+           "http://code.google.com/p/address-sanitizer/issues/detail?id=189\n",
+           top, bottom, top - bottom, top - bottom);
+    return;
+  }
+  PoisonShadow(bottom, top - bottom, 0);
+  if (curr_thread->has_fake_stack())
+    curr_thread->fake_stack()->HandleNoReturn();
+}
+
+void NOINLINE __asan_set_death_callback(void (*callback)(void)) {
+  death_callback = callback;
+}
+
+// Initialize as requested from instrumented application code.
+// We use this call as a trigger to wake up ASan from deactivated state.
+void __asan_init() {
+  AsanActivate();
+  AsanInitInternal();
 }

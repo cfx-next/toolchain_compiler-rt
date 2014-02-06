@@ -27,7 +27,8 @@ Flags *flags() {
 #ifdef TSAN_EXTERNAL_HOOKS
 extern "C" const char* __tsan_default_options();
 #else
-extern "C" const char *WEAK __tsan_default_options() {
+extern "C" SANITIZER_INTERFACE_ATTRIBUTE
+const char *WEAK __tsan_default_options() {
   return "";
 }
 #endif
@@ -57,6 +58,7 @@ static void ParseFlags(Flags *f, const char *env) {
   ParseFlag(env, &f->running_on_valgrind, "running_on_valgrind");
   ParseFlag(env, &f->history_size, "history_size");
   ParseFlag(env, &f->io_sync, "io_sync");
+  ParseFlag(env, &f->die_after_fork, "die_after_fork");
 }
 
 void InitializeFlags(Flags *f, const char *env) {
@@ -87,6 +89,7 @@ void InitializeFlags(Flags *f, const char *env) {
   f->running_on_valgrind = false;
   f->history_size = kGoMode ? 1 : 2;  // There are a lot of goroutines in Go.
   f->io_sync = 1;
+  f->die_after_fork = true;
 
   SetCommonFlagsDefaults(f);
 

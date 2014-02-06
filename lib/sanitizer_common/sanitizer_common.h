@@ -31,6 +31,8 @@ const uptr kCacheLineSize = 64;
 
 const uptr kMaxPathLength = 512;
 
+const uptr kMaxThreadStackSize = 1 << 30;  // 1Gb
+
 extern const char *SanitizerToolName;  // Can be changed by the tool.
 
 uptr GetPageSize();
@@ -212,6 +214,14 @@ DieCallbackType GetDieCallback();
 typedef void (*CheckFailedCallbackType)(const char *, int, const char *,
                                        u64, u64);
 void SetCheckFailedCallback(CheckFailedCallbackType callback);
+
+// Functions related to signal handling.
+typedef void (*SignalHandlerType)(int, void *, void *);
+bool IsDeadlySignal(int signum);
+void InstallDeadlySignalHandlers(SignalHandlerType handler);
+// Alternative signal stack (POSIX-only).
+void SetAlternateSignalStack();
+void UnsetAlternateSignalStack();
 
 // We don't want a summary too long.
 const int kMaxSummaryLength = 1024;
@@ -489,11 +499,19 @@ F IndirectExternCall(F f) {
   return indirect_call_wrapper ? ((WrapF)indirect_call_wrapper)(f) : f;
 }
 #else
-inline void SetIndirectCallWrapper(uptr wrapper) {}
+INLINE void SetIndirectCallWrapper(uptr wrapper) {}
 template <typename F>
 F IndirectExternCall(F f) {
   return f;
 }
+#endif
+
+#if SANITIZER_ANDROID
+void AndroidLogWrite(const char *buffer);
+void GetExtraActivationFlags(char *buf, uptr size);
+#else
+INLINE void AndroidLogWrite(const char *buffer_unused) {}
+INLINE void GetExtraActivationFlags(char *buf, uptr size) { *buf = '\0'; }
 #endif
 }  // namespace __sanitizer
 

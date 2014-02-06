@@ -70,12 +70,6 @@ struct Flags {
   // terminating application. Useful for debug purposes (when one needs
   // to attach gdb, for example).
   int  sleep_before_dying;
-  // If set, registers ASan custom segv handler.
-  bool handle_segv;
-  // If set, allows user register segv handler even if ASan registers one.
-  bool allow_user_segv_handler;
-  // If set, uses alternate stack for signal handling.
-  bool use_sigaltstack;
   // Allow the users to work around the bug in Nvidia drivers prior to 295.*.
   bool check_malloc_usable_size;
   // If set, explicitly unmaps (huge) shadow at exit.
@@ -115,6 +109,11 @@ struct Flags {
   // If true, assume that dynamic initializers can never access globals from
   // other modules, even if the latter are already initialized.
   bool strict_init_order;
+  // If true, ASan tweaks a bunch of other flags (quarantine, redzone, heap
+  // poisoning) to reduce memory consumption as much as possible, and restores
+  // them to original values when the first instrumented module is loaded into
+  // the process. This is mainly intended to be used on Android.
+  bool start_deactivated;
 };
 
 extern Flags asan_flags_dont_use_directly;

@@ -30,24 +30,9 @@
 
 // Build-time configuration options.
 
-// If set, asan will install its own SEGV signal handler.
-#ifndef ASAN_NEEDS_SEGV
-# if SANITIZER_ANDROID == 1
-#  define ASAN_NEEDS_SEGV 0
-# else
-#  define ASAN_NEEDS_SEGV 1
-# endif
-#endif
-
 // If set, asan will intercept C++ exception api call(s).
 #ifndef ASAN_HAS_EXCEPTIONS
 # define ASAN_HAS_EXCEPTIONS 1
-#endif
-
-// If set, asan uses the values of SHADOW_SCALE and SHADOW_OFFSET
-// provided by the instrumented objects. Otherwise constants are used.
-#ifndef ASAN_FLEXIBLE_MAPPING_AND_OFFSET
-# define ASAN_FLEXIBLE_MAPPING_AND_OFFSET 0
 #endif
 
 // If set, values like allocator chunk size, as well as defaults for some flags
@@ -73,6 +58,8 @@ namespace __asan {
 class AsanThread;
 using __sanitizer::StackTrace;
 
+void AsanInitFromRtl();
+
 // asan_rtl.cc
 void NORETURN ShowStatsAndAbort();
 
@@ -84,12 +71,10 @@ void ReplaceSystemMalloc();
 void *AsanDoesNotSupportStaticLinkage();
 
 void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp);
+void AsanOnSIGSEGV(int, void *siginfo, void *context);
 
 void MaybeReexec();
 bool AsanInterceptsSignal(int signum);
-void SetAlternateSignalStack();
-void UnsetAlternateSignalStack();
-void InstallSignalHandlers();
 void ReadContextStack(void *context, uptr *stack, uptr *ssize);
 void AsanPlatformThreadInit();
 void StopInitOrderChecking();
@@ -101,6 +86,8 @@ void AsanTSDSet(void *tsd);
 void PlatformTSDDtor(void *tsd);
 
 void AppendToErrorMessageBuffer(const char *buffer);
+
+void ParseExtraActivationFlags();
 
 // Platfrom-specific options.
 #if SANITIZER_MAC

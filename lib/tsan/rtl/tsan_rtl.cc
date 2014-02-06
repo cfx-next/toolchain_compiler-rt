@@ -43,9 +43,11 @@ static char ctx_placeholder[sizeof(Context)] ALIGNED(64);
 bool OnFinalize(bool failed);
 void OnInitialize();
 #else
+SANITIZER_INTERFACE_ATTRIBUTE
 bool WEAK OnFinalize(bool failed) {
   return failed;
 }
+SANITIZER_INTERFACE_ATTRIBUTE
 void WEAK OnInitialize() {}
 #endif
 
@@ -196,6 +198,9 @@ void DontNeedShadowFor(uptr addr, uptr size) {
 }
 
 void MapShadow(uptr addr, uptr size) {
+  // Global data is not 64K aligned, but there are no adjacent mappings,
+  // so we can get away with unaligned mapping.
+  // CHECK_EQ(addr, addr & ~((64 << 10) - 1));  // windows wants 64K alignment
   MmapFixedNoReserve(MemToShadow(addr), size * kShadowMultiplier);
 }
 
@@ -203,6 +208,7 @@ void MapThreadTrace(uptr addr, uptr size) {
   DPrintf("#0: Mapping trace at %p-%p(0x%zx)\n", addr, addr + size, size);
   CHECK_GE(addr, kTraceMemBegin);
   CHECK_LE(addr + size, kTraceMemBegin + kTraceMemSize);
+  CHECK_EQ(addr, addr & ~((64 << 10) - 1));  // windows wants 64K alignment
   uptr addr1 = (uptr)MmapFixedNoReserve(addr, size);
   if (addr1 != addr) {
     Printf("FATAL: ThreadSanitizer can not mmap thread trace (%p/%p->%p)\n",
@@ -312,6 +318,42 @@ int Finalize(ThreadState *thr) {
   StatOutput(ctx->stat);
   return failed ? flags()->exitcode : 0;
 }
+
+#ifndef TSAN_GO
+void ForkBefore(ThreadState *thr, uptr pc) {
+  Context *ctx = CTX();
+  ctx->report_mtx.Lock();
+  ctx->thread_registry->Lock();
+}
+
+void ForkParentAfter(ThreadState *thr, uptr pc) {
+  Context *ctx = CTX();
+  ctx->thread_registry->Unlock();
+  ctx->report_mtx.Unlock();
+}
+
+void ForkChildAfter(ThreadState *thr, uptr pc) {
+  Context *ctx = CTX();
+  ctx->thread_registry->Unlock();
+  ctx->report_mtx.Unlock();
+
+  uptr nthread = 0;
+  ctx->thread_registry->GetNumberOfThreads(0, 0, &nthread /* alive threads */);
+  VPrintf(1, "ThreadSanitizer: forked new process with pid %d,"
+      " parent had %d threads\n", (int)internal_getpid(), (int)nthread);
+  if (nthread == 1) {
+    internal_start_thread(&BackgroundThread, 0);
+  } else {
+    // We've just forked a multi-threaded process. We cannot reasonably function
+    // after that (some mutexes may be locked before fork). So just enable
+    // ignores for everything in the hope that we will exec soon.
+    ctx->after_multithreaded_fork = true;
+    thr->ignore_interceptors++;
+    ThreadIgnoreBegin(thr, pc);
+    ThreadIgnoreSyncBegin(thr, pc);
+  }
+}
+#endif
 
 #ifndef TSAN_GO
 u32 CurrentStackId(ThreadState *thr, uptr pc) {

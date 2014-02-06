@@ -34,6 +34,7 @@ namespace __sanitizer {
   extern unsigned pid_t_sz;
   extern unsigned timeval_sz;
   extern unsigned uid_t_sz;
+  extern unsigned gid_t_sz;
   extern unsigned mbstate_t_sz;
   extern unsigned struct_timezone_sz;
   extern unsigned struct_tms_sz;
@@ -42,6 +43,7 @@ namespace __sanitizer {
   extern unsigned struct_sched_param_sz;
   extern unsigned struct_statfs_sz;
   extern unsigned struct_statfs64_sz;
+  extern unsigned struct_sockaddr_sz;
 
 #if !SANITIZER_ANDROID
   extern unsigned ucontext_t_sz;
@@ -142,24 +144,38 @@ namespace __sanitizer {
     int gid;
     int cuid;
     int cgid;
-#ifdef __powerpc64__
+#ifdef __powerpc__
     unsigned mode;
     unsigned __seq;
+    u64 __unused1;
+    u64 __unused2;
 #else
     unsigned short mode;
     unsigned short __pad1;
     unsigned short __seq;
     unsigned short __pad2;
+#if defined(__x86_64__) && !defined(_LP64)
+    u64 __unused1;
+    u64 __unused2;
+#else
+    unsigned long __unused1;
+    unsigned long __unused2;
 #endif
-    uptr __unused1;
-    uptr __unused2;
+#endif
   };
 
   struct __sanitizer_shmid_ds {
     __sanitizer_ipc_perm shm_perm;
   #ifndef __powerpc__
     uptr shm_segsz;
+  #elif !defined(__powerpc64__)
+    uptr __unused0;
   #endif
+  #if defined(__x86_64__) && !defined(_LP64)
+    u64 shm_atime;
+    u64 shm_dtime;
+    u64 shm_ctime;
+  #else
     uptr shm_atime;
   #ifndef _LP64
     uptr __unused1;
@@ -172,21 +188,41 @@ namespace __sanitizer {
   #ifndef _LP64
     uptr __unused3;
   #endif
+  #endif
   #ifdef __powerpc__
     uptr shm_segsz;
   #endif
     int shm_cpid;
     int shm_lpid;
+  #if defined(__x86_64__) && !defined(_LP64)
+    u64 shm_nattch;
+    u64 __unused4;
+    u64 __unused5;
+  #else
     uptr shm_nattch;
     uptr __unused4;
     uptr __unused5;
+  #endif
   };
-  #endif  // SANITIZER_LINUX && !SANITIZER_ANDROID
+#endif  // SANITIZER_LINUX && !SANITIZER_ANDROID
 
   struct __sanitizer_iovec {
-    void  *iov_base;
+    void *iov_base;
     uptr iov_len;
   };
+
+#if !SANITIZER_ANDROID
+  struct __sanitizer_ifaddrs {
+    struct __sanitizer_ifaddrs *ifa_next;
+    char *ifa_name;
+    unsigned int ifa_flags;
+    void *ifa_addr;    // (struct sockaddr *)
+    void *ifa_netmask; // (struct sockaddr *)
+    // This is a union on Linux.
+    void *ifa_dstaddr; // (struct sockaddr *)
+    void *ifa_data;
+  };
+#endif  // !SANITIZER_ANDROID
 
 #if SANITIZER_MAC
   typedef unsigned long __sanitizer_pthread_key_t;
@@ -287,20 +323,27 @@ namespace __sanitizer {
   };
 #endif
 
+#if defined(__x86_64__) && !defined(_LP64)
+  typedef long long __sanitizer_clock_t;
+#else
   typedef long __sanitizer_clock_t;
+#endif
 
 #if SANITIZER_LINUX
-#if defined(_LP64) || defined(__x86_64__)
+#if defined(_LP64) || defined(__x86_64__) || defined(__powerpc__)
   typedef unsigned __sanitizer___kernel_uid_t;
   typedef unsigned __sanitizer___kernel_gid_t;
-  typedef long long __sanitizer___kernel_off_t;
 #else
   typedef unsigned short __sanitizer___kernel_uid_t;
   typedef unsigned short __sanitizer___kernel_gid_t;
+#endif
+#if defined(__x86_64__) && !defined(_LP64)
+  typedef long long __sanitizer___kernel_off_t;
+#else
   typedef long __sanitizer___kernel_off_t;
 #endif
 
-#if defined(__powerpc64__)
+#if defined(__powerpc__)
   typedef unsigned int __sanitizer___kernel_old_uid_t;
   typedef unsigned int __sanitizer___kernel_old_gid_t;
 #else
@@ -333,10 +376,11 @@ namespace __sanitizer {
   };
 #endif
 
+  // Linux system headers define the 'sa_handler' and 'sa_sigaction' macros.
   struct __sanitizer_sigaction {
     union {
-      void (*sa_handler)(int sig);
-      void (*sa_sigaction)(int sig, void *siginfo, void *uctx);
+      void (*sigaction)(int sig, void *siginfo, void *uctx);
+      void (*handler)(int sig);
     };
     __sanitizer_sigset_t sa_mask;
     int sa_flags;
@@ -349,10 +393,11 @@ namespace __sanitizer {
     u8 sig[8];
   };
 
+  // Linux system headers define the 'sa_handler' and 'sa_sigaction' macros.
   struct __sanitizer_kernel_sigaction_t {
     union {
-      void (*sigaction)(int signo, void *info, void *ctx);
       void (*handler)(int signo);
+      void (*sigaction)(int signo, void *info, void *ctx);
     };
     unsigned long sa_flags;
     void (*sa_restorer)(void);
@@ -473,6 +518,8 @@ namespace __sanitizer {
   extern int shmctl_shm_stat;
 #endif
 
+  extern int map_fixed;
+
   // ioctl arguments
   struct __sanitizer_ifconf {
     int ifc_len;
@@ -485,7 +532,36 @@ namespace __sanitizer {
   };
 #endif
 
-#define IOC_SIZE(nr) (((nr) >> 16) & 0x3fff)
+#define IOC_NRBITS 8
+#define IOC_TYPEBITS 8
+#if defined(__powerpc__) || defined(__powerpc64__)
+#define IOC_SIZEBITS 13
+#define IOC_DIRBITS 3
+#define IOC_NONE 1U
+#define IOC_WRITE 4U
+#define IOC_READ 2U
+#else
+#define IOC_SIZEBITS 14
+#define IOC_DIRBITS 2
+#define IOC_NONE 0U
+#define IOC_WRITE 1U
+#define IOC_READ 2U
+#endif
+#define IOC_NRMASK ((1 << IOC_NRBITS) - 1)
+#define IOC_TYPEMASK ((1 << IOC_TYPEBITS) - 1)
+#define IOC_SIZEMASK ((1 << IOC_SIZEBITS) - 1)
+#define IOC_DIRMASK ((1 << IOC_DIRBITS) - 1)
+#define IOC_NRSHIFT 0
+#define IOC_TYPESHIFT (IOC_NRSHIFT + IOC_NRBITS)
+#define IOC_SIZESHIFT (IOC_TYPESHIFT + IOC_TYPEBITS)
+#define IOC_DIRSHIFT (IOC_SIZESHIFT + IOC_SIZEBITS)
+#define EVIOC_EV_MAX 0x1f
+#define EVIOC_ABS_MAX 0x3f
+
+#define IOC_DIR(nr) (((nr) >> IOC_DIRSHIFT) & IOC_DIRMASK)
+#define IOC_TYPE(nr) (((nr) >> IOC_TYPESHIFT) & IOC_TYPEMASK)
+#define IOC_NR(nr) (((nr) >> IOC_NRSHIFT) & IOC_NRMASK)
+#define IOC_SIZE(nr) (((nr) >> IOC_SIZESHIFT) & IOC_SIZEMASK)
 
   extern unsigned struct_arpreq_sz;
   extern unsigned struct_ifreq_sz;

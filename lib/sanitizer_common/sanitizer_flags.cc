@@ -18,6 +18,8 @@
 
 namespace __sanitizer {
 
+CommonFlags common_flags_dont_use;
+
 void SetCommonFlagsDefaults(CommonFlags *f) {
   f->symbolize = true;
   f->external_symbolizer_path = 0;
@@ -32,6 +34,11 @@ void SetCommonFlagsDefaults(CommonFlags *f) {
   f->leak_check_at_exit = true;
   f->allocator_may_return_null = false;
   f->print_summary = true;
+  f->check_printf = false;
+  // TODO(glider): tools may want to set different defaults for handle_segv.
+  f->handle_segv = SANITIZER_NEEDS_SEGV;
+  f->allow_user_segv_handler = false;
+  f->use_sigaltstack = false;
 }
 
 void ParseCommonFlagsFromString(CommonFlags *f, const char *str) {
@@ -48,6 +55,10 @@ void ParseCommonFlagsFromString(CommonFlags *f, const char *str) {
   ParseFlag(str, &f->leak_check_at_exit, "leak_check_at_exit");
   ParseFlag(str, &f->allocator_may_return_null, "allocator_may_return_null");
   ParseFlag(str, &f->print_summary, "print_summary");
+  ParseFlag(str, &f->check_printf, "check_printf");
+  ParseFlag(str, &f->handle_segv, "handle_segv");
+  ParseFlag(str, &f->allow_user_segv_handler, "allow_user_segv_handler");
+  ParseFlag(str, &f->use_sigaltstack, "use_sigaltstack");
 
   // Do a sanity check for certain flags.
   if (f->malloc_context_size < 1)

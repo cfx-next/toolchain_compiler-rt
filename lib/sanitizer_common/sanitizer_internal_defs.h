@@ -34,6 +34,15 @@
 # define SANITIZER_SUPPORTS_WEAK_HOOKS 0
 #endif
 
+// If set, the tool will install its own SEGV signal handler.
+#ifndef SANITIZER_NEEDS_SEGV
+# if SANITIZER_ANDROID == 1
+#  define SANITIZER_NEEDS_SEGV 0
+# else
+#  define SANITIZER_NEEDS_SEGV 1
+# endif
+#endif
+
 // GCC does not understand __has_feature
 #if !defined(__has_feature)
 # define __has_feature(x) 0
@@ -99,7 +108,7 @@ extern "C" {
   void __sanitizer_report_error_summary(const char *error_summary);
 
   SANITIZER_INTERFACE_ATTRIBUTE void __sanitizer_cov_dump();
-  SANITIZER_INTERFACE_ATTRIBUTE void __sanitizer_cov(void *pc);
+  SANITIZER_INTERFACE_ATTRIBUTE void __sanitizer_cov();
   SANITIZER_INTERFACE_ATTRIBUTE
   void __sanitizer_annotate_contiguous_container(const void *beg,
                                                  const void *end,
