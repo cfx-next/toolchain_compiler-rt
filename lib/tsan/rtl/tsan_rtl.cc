@@ -241,7 +241,6 @@ void Initialize(ThreadState *thr) {
   InitializeShadowMemory();
 #endif
   InitializeFlags(&ctx->flags, env);
-  OnInitialize();
   // Setup correct file descriptor for error reports.
   __sanitizer_set_report_path(flags()->log_path);
   InitializeSuppressions();
@@ -268,6 +267,8 @@ void Initialize(ThreadState *thr) {
            (int)internal_getpid());
     while (__tsan_resumed == 0) {}
   }
+
+  OnInitialize();
 }
 
 int Finalize(ThreadState *thr) {
@@ -617,7 +618,7 @@ static void MemoryRangeSet(ThreadState *thr, uptr pc, uptr addr, uptr size,
   size = (size + (kShadowCell - 1)) & ~(kShadowCell - 1);
   // UnmapOrDie/MmapFixedNoReserve does not work on Windows,
   // so we do it only for C/C++.
-  if (kGoMode || size < 64*1024) {
+  if (kGoMode || size < common_flags()->clear_shadow_mmap_threshold) {
     u64 *p = (u64*)MemToShadow(addr);
     CHECK(IsShadowMem((uptr)p));
     CHECK(IsShadowMem((uptr)(p + size * kShadowCnt / kShadowCell - 1)));

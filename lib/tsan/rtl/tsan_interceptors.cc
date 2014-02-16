@@ -576,21 +576,21 @@ void *operator new[](__sanitizer::uptr size, std::nothrow_t const&) {
   user_free(thr, pc, ptr);
 
 SANITIZER_INTERFACE_ATTRIBUTE
-void operator delete(void *ptr);
-void operator delete(void *ptr) {
+void operator delete(void *ptr) throw();
+void operator delete(void *ptr) throw() {
   OPERATOR_DELETE_BODY(_ZdlPv);
 }
 
 SANITIZER_INTERFACE_ATTRIBUTE
-void operator delete[](void *ptr);
-void operator delete[](void *ptr) {
-  OPERATOR_DELETE_BODY(_ZdlPvRKSt9nothrow_t);
+void operator delete[](void *ptr) throw();
+void operator delete[](void *ptr) throw() {
+  OPERATOR_DELETE_BODY(_ZdaPv);
 }
 
 SANITIZER_INTERFACE_ATTRIBUTE
 void operator delete(void *ptr, std::nothrow_t const&);
 void operator delete(void *ptr, std::nothrow_t const&) {
-  OPERATOR_DELETE_BODY(_ZdaPv);
+  OPERATOR_DELETE_BODY(_ZdlPvRKSt9nothrow_t);
 }
 
 SANITIZER_INTERFACE_ATTRIBUTE
