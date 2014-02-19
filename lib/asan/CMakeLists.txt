@@ -28,15 +28,8 @@ if(ANDROID)
   include_directories(${COMPILER_RT_EXTRA_ANDROID_HEADERS})
 endif()
 
-if (NOT MSVC)
-  set(ASAN_CFLAGS
-    ${SANITIZER_COMMON_CFLAGS}
-    -fno-rtti)
-else()
-  set(ASAN_CFLAGS
-    ${SANITIZER_COMMON_CFLAGS}
-    /GR-)
-endif()
+set(ASAN_CFLAGS ${SANITIZER_COMMON_CFLAGS})
+append_no_rtti_flag(ASAN_CFLAGS)
 
 set(ASAN_COMMON_DEFINITIONS
   ASAN_HAS_EXCEPTIONS=1)
@@ -44,6 +37,12 @@ set(ASAN_COMMON_DEFINITIONS
 if(ANDROID)
   list(APPEND ASAN_COMMON_DEFINITIONS
     ASAN_LOW_MEMORY=1)
+endif()
+
+if (NOT MSVC)
+  set(ASAN_ASM_SOURCES asan_asm_instrumentation.S)
+  set_source_files_properties(${ASAN_ASM_SOURCES} PROPERTIES LANGUAGE C)
+  list(APPEND ASAN_SOURCES ${ASAN_ASM_SOURCES})
 endif()
 
 # Compile ASan sources into an object library.
@@ -134,7 +133,8 @@ endif()
 
 add_compiler_rt_resource_file(asan_blacklist asan_blacklist.txt)
 add_dependencies(asan asan_blacklist)
+add_dependencies(compiler-rt asan)
 
-if(LLVM_INCLUDE_TESTS)
+if(COMPILER_RT_INCLUDE_TESTS)
   add_subdirectory(tests)
 endif()

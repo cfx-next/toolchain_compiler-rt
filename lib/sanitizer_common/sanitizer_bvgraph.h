@@ -33,10 +33,60 @@ class BVGraph {
       v[i].clear();
   }
 
+  bool empty() const {
+    for (uptr i = 0; i < size(); i++)
+      if (!v[i].empty())
+        return false;
+    return true;
+  }
+
   // Returns true if a new edge was added.
   bool addEdge(uptr from, uptr to) {
     check(from, to);
     return v[from].setBit(to);
+  }
+
+  // Returns true if at least one new edge was added.
+  bool addEdges(const BV &from, uptr to) {
+    bool res = false;
+    t1.copyFrom(from);
+    while (!t1.empty())
+      if (v[t1.getAndClearFirstOne()].setBit(to))
+        res = true;
+    return res;
+  }
+
+  // Returns true if the edge from=>to was removed.
+  bool removeEdge(uptr from, uptr to) {
+    return v[from].clearBit(to);
+  }
+
+  // Returns true if at least one edge *=>to was removed.
+  bool removeEdgesTo(const BV &to) {
+    bool res = 0;
+    for (uptr from = 0; from < size(); from++) {
+      if (v[from].setDifference(to))
+        res = true;
+    }
+    return res;
+  }
+
+  // Returns true if at least one edge from=>* was removed.
+  bool removeEdgesFrom(const BV &from) {
+    bool res = false;
+    t1.copyFrom(from);
+    while (!t1.empty()) {
+      uptr idx = t1.getAndClearFirstOne();
+      if (!v[idx].empty()) {
+        v[idx].clear();
+        res = true;
+      }
+    }
+    return res;
+  }
+
+  void removeEdgesFrom(uptr from) {
+    return v[from].clear();
   }
 
   bool hasEdge(uptr from, uptr to) const {
@@ -76,6 +126,15 @@ class BVGraph {
       if (uptr res = findPath(idx, targets, path + 1, path_size - 1))
         return res + 1;
     }
+    return 0;
+  }
+
+  // Same as findPath, but finds a shortest path.
+  uptr findShortestPath(uptr from, const BV &targets, uptr *path,
+                        uptr path_size) {
+    for (uptr p = 1; p <= path_size; p++)
+      if (findPath(from, targets, path, p) == p)
+        return p;
     return 0;
   }
 

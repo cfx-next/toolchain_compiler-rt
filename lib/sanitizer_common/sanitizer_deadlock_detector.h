@@ -12,6 +12,13 @@
 // When a lock event happens, the detector checks if the locks already held by
 // the current thread are reachable from the newly acquired lock.
 //
+// The detector can handle only a fixed amount of simultaneously live locks
+// (a lock is alive if it has been locked at least once and has not been
+// destroyed). When the maximal number of locks is reached the entire graph
+// is flushed and the new lock epoch is started. The node ids from the old
+// epochs can not be used with any of the detector methods except for
+// nodeBelongsToCurrentEpoch().
+//
 // FIXME: this is work in progress, nothing really works yet.
 //
 //===----------------------------------------------------------------------===//
@@ -26,38 +33,40 @@ namespace __sanitizer {
 
 // Thread-local state for DeadlockDetector.
 // It contains the locks currently held by the owning thread.
+template <class BV>
 class DeadlockDetectorTLS {
  public:
   // No CTOR.
-  void clear() { n_locks_ = 0; }
-
-  void addLock(uptr node) {
-    CHECK_LT(n_locks_, ARRAY_SIZE(locks_));
-    locks_[n_locks_++] = node;
+  void clear() {
+    bv_.clear();
+    epoch_ = 0;
   }
 
-  void removeLock(uptr node) {
-    CHECK_NE(n_locks_, 0U);
-    for (sptr i = n_locks_ - 1; i >= 0; i--) {
-      if (locks_[i] == node) {
-        locks_[i] = locks_[n_locks_ - 1];
-        n_locks_--;
-        return;
-      }
+  void addLock(uptr lock_id, uptr current_epoch) {
+    // Printf("addLock: %zx %zx\n", lock_id, current_epoch);
+    CHECK_LE(epoch_, current_epoch);
+    if (current_epoch != epoch_)  {
+      bv_.clear();
+      epoch_ = current_epoch;
     }
-    CHECK(0);
+    CHECK(bv_.setBit(lock_id));
   }
 
-  uptr numLocks() const { return n_locks_; }
-
-  uptr getLock(uptr idx) const {
-    CHECK_LT(idx, n_locks_);
-    return locks_[idx];
+  void removeLock(uptr lock_id, uptr current_epoch) {
+    // Printf("remLock: %zx %zx\n", lock_id, current_epoch);
+    CHECK_LE(epoch_, current_epoch);
+    if (current_epoch != epoch_)  {
+      bv_.clear();
+      epoch_ = current_epoch;
+    }
+    bv_.clearBit(lock_id);  // May already be cleared due to epoch update.
   }
+
+  const BV &getLocks() const { return bv_; }
 
  private:
-  uptr n_locks_;
-  uptr locks_[64];
+  BV bv_;
+  uptr epoch_;
 };
 
 // DeadlockDetector.
@@ -90,9 +99,10 @@ class DeadlockDetector {
       return getAvailableNode(data);
     if (!recycled_nodes_.empty()) {
       CHECK(available_nodes_.empty());
+      // removeEdgesFrom was called in removeNode.
+      g_.removeEdgesTo(recycled_nodes_);
       available_nodes_.setUnion(recycled_nodes_);
       recycled_nodes_.clear();
-      // FIXME: actually recycle nodes in the graph.
       return getAvailableNode(data);
     }
     // We are out of vacant nodes. Flush and increment the current_epoch_.
@@ -106,33 +116,59 @@ class DeadlockDetector {
   // Get data associated with the node created by newNode().
   uptr getData(uptr node) const { return data_[nodeToIndex(node)]; }
 
+  bool nodeBelongsToCurrentEpoch(uptr node) {
+    return node && (node / size() * size()) == current_epoch_;
+  }
+
   void removeNode(uptr node) {
     uptr idx = nodeToIndex(node);
     CHECK(!available_nodes_.getBit(idx));
     CHECK(recycled_nodes_.setBit(idx));
-    // FIXME: also remove from the graph.
+    g_.removeEdgesFrom(idx);
   }
 
   // Handle the lock event, return true if there is a cycle.
   // FIXME: handle RW locks, recusive locks, etc.
-  bool onLock(DeadlockDetectorTLS *dtls, uptr cur_node) {
-    BV &cur_locks = t1;
-    cur_locks.clear();
+  bool onLock(DeadlockDetectorTLS<BV> *dtls, uptr cur_node) {
     uptr cur_idx = nodeToIndex(cur_node);
-    for (uptr i = 0, n = dtls->numLocks(); i < n; i++) {
-      uptr prev_node = dtls->getLock(i);
-      uptr prev_idx = nodeToIndex(prev_node);
-      g_.addEdge(prev_idx, cur_idx);
-      cur_locks.setBit(prev_idx);
-      // Printf("OnLock %zx; prev %zx\n", cur_node, dtls->getLock(i));
-    }
-    dtls->addLock(cur_node);
-    return g_.isReachable(cur_idx, cur_locks);
+    bool is_reachable = g_.isReachable(cur_idx, dtls->getLocks());
+    g_.addEdges(dtls->getLocks(), cur_idx);
+    dtls->addLock(cur_idx, current_epoch_);
+    return is_reachable;
+  }
+
+  // Finds a path between the lock 'cur_node' (which is currently held in dtls)
+  // and some other currently held lock, returns the length of the path
+  // or 0 on failure.
+  uptr findPathToHeldLock(DeadlockDetectorTLS<BV> *dtls, uptr cur_node,
+                          uptr *path, uptr path_size) {
+    tmp_bv_.copyFrom(dtls->getLocks());
+    uptr idx = nodeToIndex(cur_node);
+    CHECK(tmp_bv_.clearBit(idx));
+    uptr res = g_.findShortestPath(idx, tmp_bv_, path, path_size);
+    for (uptr i = 0; i < res; i++)
+      path[i] = indexToNode(path[i]);
+    if (res)
+      CHECK_EQ(path[0], cur_node);
+    return res;
   }
 
   // Handle the unlock event.
-  void onUnlock(DeadlockDetectorTLS *dtls, uptr node) {
-    dtls->removeLock(node);
+  void onUnlock(DeadlockDetectorTLS<BV> *dtls, uptr node) {
+    dtls->removeLock(nodeToIndex(node), current_epoch_);
+  }
+
+  bool isHeld(DeadlockDetectorTLS<BV> *dtls, uptr node) const {
+    return dtls->getLocks().getBit(nodeToIndex(node));
+  }
+
+  uptr testOnlyGetEpoch() const { return current_epoch_; }
+
+  void Print() {
+    for (uptr from = 0; from < size(); from++)
+      for (uptr to = 0; to < size(); to++)
+        if (g_.hasEdge(from, to))
+          Printf("  %zx => %zx\n", from, to);
   }
 
  private:
@@ -143,12 +179,12 @@ class DeadlockDetector {
     CHECK_EQ(current_epoch_, node / size() * size());
   }
 
-  uptr indexToNode(uptr idx) {
+  uptr indexToNode(uptr idx) const {
     check_idx(idx);
     return idx + current_epoch_;
   }
 
-  uptr nodeToIndex(uptr node) {
+  uptr nodeToIndex(uptr node) const {
     check_node(node);
     return node % size();
   }
@@ -162,9 +198,9 @@ class DeadlockDetector {
   uptr current_epoch_;
   BV available_nodes_;
   BV recycled_nodes_;
+  BV tmp_bv_;
   BVGraph<BV> g_;
   uptr data_[BV::kSize];
-  BV t1;  // Temporary object which we can not keep on stack.
 };
 
 } // namespace __sanitizer

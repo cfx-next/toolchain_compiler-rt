@@ -32,9 +32,7 @@ set(ASAN_UNITTEST_COMMON_CFLAGS
   -Werror=sign-compare
   -g
   -O2)
-if(SUPPORTS_NO_VARIADIC_MACROS_FLAG)
-  list(APPEND ASAN_UNITTEST_COMMON_CFLAGS -Wno-variadic-macros)
-endif()
+append_if(ASAN_UNITTEST_COMMON_CFLAGS COMPILER_RT_HAS_WNO_VARIADIC_MACROS_FLAG -Wno-variadic-macros)
 
 # Use -D instead of definitions to please custom compile command.
 list(APPEND ASAN_UNITTEST_COMMON_CFLAGS
@@ -125,6 +123,7 @@ set(ASAN_NOINST_TEST_SOURCES
 
 set(ASAN_INST_TEST_SOURCES
   ${COMPILER_RT_GTEST_SOURCE}
+  asan_asm_test.cc
   asan_globals_test.cc
   asan_interface_test.cc
   asan_test.cc
