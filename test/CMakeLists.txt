@@ -36,10 +36,24 @@ if(COMPILER_RT_CAN_EXECUTE_TESTS)
   if(MSAN_SUPPORTED_ARCH)
     add_subdirectory(msan)
   endif()
+  if(SANITIZER_COMMON_SUPPORTED_ARCH)
+    add_subdirectory(sanitizer_common)
+  endif()
   if(TSAN_SUPPORTED_ARCH)
     add_subdirectory(tsan)
   endif()
   if(UBSAN_SUPPORTED_ARCH)
     add_subdirectory(ubsan)
   endif()
+endif()
+
+if(COMPILER_RT_STANDALONE_BUILD)
+  # Now that we've traversed all the directories and know all the lit testsuites,
+  # introduce a rule to run to run all of them.
+  get_property(LLVM_LIT_TESTSUITES GLOBAL PROPERTY LLVM_LIT_TESTSUITES)
+  get_property(LLVM_LIT_DEPENDS GLOBAL PROPERTY LLVM_LIT_DEPENDS)
+  add_lit_target(check-all
+    "Running all regression tests"
+    ${LLVM_LIT_TESTSUITES}
+    DEPENDS ${LLVM_LIT_DEPENDS})
 endif()
