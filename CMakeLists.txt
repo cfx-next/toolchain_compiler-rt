@@ -26,6 +26,20 @@ else()
   cmake_minimum_required(VERSION 2.8.12.1)
 endif()
 
+# FIXME: It may be removed when we use 2.8.12.
+if(CMAKE_VERSION VERSION_LESS 2.8.12)
+  # Invalidate a couple of keywords.
+  set(cmake_2_8_12_INTERFACE)
+  set(cmake_2_8_12_PRIVATE)
+else()
+  # Use ${cmake_2_8_12_KEYWORD} intead of KEYWORD in target_link_libraries().
+  set(cmake_2_8_12_INTERFACE INTERFACE)
+  set(cmake_2_8_12_PRIVATE PRIVATE)
+  if(POLICY CMP0022)
+    cmake_policy(SET CMP0022 NEW) # automatic when 2.8.12 is required
+  endif()
+endif()
+
 # Top level target used to build all compiler-rt libraries.
 add_custom_target(compiler-rt ALL)
 
@@ -37,6 +51,7 @@ if (NOT COMPILER_RT_STANDALONE_BUILD)
          ${PACKAGE_VERSION})
   # Setup the paths where compiler-rt runtimes and headers should be stored.
   set(COMPILER_RT_OUTPUT_DIR ${LLVM_LIBRARY_OUTPUT_INTDIR}/clang/${CLANG_VERSION})
+  set(COMPILER_RT_EXEC_OUTPUT_DIR ${LLVM_RUNTIME_OUTPUT_INTDIR})
   set(COMPILER_RT_INSTALL_PATH lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION})
   option(COMPILER_RT_INCLUDE_TESTS "Generate and build compiler-rt unit tests."
          ${LLVM_INCLUDE_TESTS})
@@ -49,6 +64,8 @@ else()
   # Take output dir and install path from the user.
   set(COMPILER_RT_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR} CACHE PATH
     "Path where built compiler-rt libraries should be stored.")
+  set(COMPILER_RT_EXEC_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/bin CACHE PATH
+    "Path where built compiler-rt executables should be stored.")
   set(COMPILER_RT_INSTALL_PATH ${CMAKE_INSTALL_PREFIX} CACHE PATH
     "Path where built compiler-rt libraries should be installed.")
   option(COMPILER_RT_INCLUDE_TESTS "Generate and build compiler-rt unit tests." OFF)
@@ -221,6 +238,11 @@ include(config-ix)
 if(COMPILER_RT_ENABLE_WERROR)
   add_definitions_if(COMPILER_RT_HAS_WERROR_FLAG -Werror)
   add_definitions_if(COMPILER_RT_HAS_WX_FLAG /WX)
+endif()
+
+# Emulate C99 and C++11's __func__ for MSVC prior to 2013 CTP.
+if(NOT COMPILER_RT_HAS_FUNC_SYMBOL)
+  add_definitions(-D__func__=__FUNCTION__)
 endif()
 
 # Provide some common commmandline flags for Sanitizer runtimes.
